@@ -236,9 +236,23 @@ sub pipeline_analyses {
       -rc_name    => 'default',
       -meadow_type       => 'LSF',
       -flow_into  => {
-        '1->A' => 'PrepareAssemblyData',
+        '1->A' => 'LoadSequenceData',
         'A->1' => 'LoadMetadata',
       },
+    },
+
+    {
+      -logic_name => 'LoadSequenceData',
+      -module     => 'LoadSequenceData',
+      -language => 'python3',
+      -parameters        => {
+        work_dir => $self->o('pipeline_dir') . '/#db_name#/load_sequence',
+      },
+      -analysis_capacity   => 5,
+      -rc_name         => '8GB',
+      -max_retry_count => 0,
+      -meadow_type       => 'LSF',
+      -flow_into  => [ 'PrepareAssemblyData' ],
     },
 
     {
