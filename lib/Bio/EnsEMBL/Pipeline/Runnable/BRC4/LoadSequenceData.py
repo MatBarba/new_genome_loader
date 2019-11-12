@@ -9,7 +9,7 @@ import os
 import subprocess as sp
 import sys
 
-from os.path import join as pj
+from os.path import dirname, join as pj
 
 from Bio import SeqIO
 
@@ -26,34 +26,22 @@ class LoadSequenceData(eHive.BaseRunnable):
         }
 
     def run(self):
+        errors = []
         # params
         en_root = self.param_required("ensembl_root_dir")
         wd = self.param_required("work_dir")
-      
         cs_order= self.param("cs_order")
-        IUPAC = self.param("IUPAC")
-        
-        # 
-        errors = []
 
         # initialize whatever
-        fasta_raw = self.from_param("manifest_data", "fasta_dna")
         agps = self.from_param("manifest_data", "agp")
         genome = self.from_param("manifest_data", "genome")
         sra = self.from_param("manifest_data", "seq_region")
         
         # rename IUPAC to N symbols using sed
-        os.makedirs(pj(wd,"fasta"), exist_ok=True)
-        iupac_cmd = r'''{_cat} {_file} | sed -r '/^[^>]/ {{ s/[{_IUPAC}]+/N/g; s/{_iupac}/n/g }}' > {_out}'''.format(
-            _cat = self.is_gz(fasta_raw) and "zcat" or "cat",
-            _file = fasta_raw,
-            _IUPAC = IUPAC.upper(),
-            _iupac = IUPAC.lower(),
-            _out = pj(wd, "fasta", "seq_no_iupac.fasta")
-            )
+        fasta_raw = self.from_param("manifest_data", "fasta_dna")
+        fasta_clean = pj(wd, "fasta", "seq_no_iupac.fasta")
         try:
-            print("running %s" % (iupac_cmd), file = sys.stderr)
-            res = sp.run(iupac_cmd, shell=True, check=True)
+            self.remove_IUPAC(fasta_raw, fasta_clean)
         except sp.CalledProcessError as e:
             errors += [ "Execution failed: {} ".format(e) ]
 
@@ -62,12 +50,28 @@ class LoadSequenceData(eHive.BaseRunnable):
         if errors:
             raise Exception("Integrity test failed: " + str(errors))
 
+    # STAGES
+    def remove_IUPAC(self, from_file, to_file):
+        IUPAC = self.param("IUPAC")
+        os.makedirs(dirname(to_file), exist_ok=True)
+        cmd = r'''{_cat} {_file} | sed -r '/^[^>]/ {{ s/[{_IUPAC}]+/N/g; s/{_iupac}/n/g }}' > {_out}'''.format(
+            _cat = self.is_gz(from_file) and "zcat" or "cat",
+            _file = from_file,
+            _IUPAC = IUPAC.upper(),
+            _iupac = IUPAC.lower(),
+            _out = to_file
+        )
+        print("running %s" % (cmd), file = sys.stderr)
+        return sp.run(cmd, shell=True, check=True)
+
+    # UTILS
     def is_gz(self, filename):
       try:   
           return magic.from_file(filename, mime=True) == 'application/x-gzip'
       except:
           ...
       return False 
+
  
     # TODO: add some metafunc setter getter
     def from_param(self, param, key):
