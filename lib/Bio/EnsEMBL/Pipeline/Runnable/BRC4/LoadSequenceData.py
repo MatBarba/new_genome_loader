@@ -3,6 +3,7 @@
 from BCBio import GFF
 
 import eHive
+import gzip
 import json
 import magic
 import os
@@ -13,7 +14,6 @@ from os.path import dirname, join as pj
 
 from Bio import SeqIO
 
-import gzip
 import io
 from math import floor
 
@@ -59,7 +59,7 @@ class LoadSequenceData(eHive.BaseRunnable):
         # when loading agp sort by:
         #   highest component (cmp) cs level
         #   lowest difference between cs ranks (asm - cmp)
-        #   i.e: chromosome-scaffold
+        #   i.e: chromosome-scaffold scaffold-chunk chromosome-chunk
         agp_cs_pairs = list(map(lambda x: [x]+x.split("-"), agps.keys()))
         agp_levels = [ (x[0], cs_order[x[1]], cs_order[x[2]]) for x in agp_cs_pairs ]
         bad_agps = list(filter(lambda x: x[1] < x[2], agp_levels))
@@ -68,28 +68,49 @@ class LoadSequenceData(eHive.BaseRunnable):
          
         agp_levels_sorted = [ e[0] for e in sorted(agp_levels, key=lambda x:(-x[2], x[1]-x[2])) ]
         print(" ".join(agp_levels_sorted), file=sys.stderr)
-        #prune agps
-        # make pruned agps
-        # use them for loading
 
-        """
-i.e., when chunk(1),contig(2),non_ref_scaffold(3),scaffold(4),superscaffold(5),linkage_group(6),chromosome(7)
-chromosome_scaffold 7:4
-scaffold_contig 4:2
-chromosome_contig 7:2
-contig_chunk 2:1
-scaffold_chunk 4:1
-chromosome_chunk 7:1
-do not use agp mapping line, if src (lowest cs rank component is in the used list).
-fix gaps. remove leading/trailing gaps.
-don't include chains made of gaps only.
-        """
+        cs_rank = {e:i for i,e in enumerate(sorted(cs_used_set,key=lambda x:-cs_order[x]), start=1)} 
+        #prune agps
+        agps_pruned_dir = pj(wd, "agps_pruned") 
+        agps_pruned = {}
+        used_components = set()
+        for asm_cmp in agp_levels_sorted:
+           agp_file_src = agps[asm_cmp] 
+           agp_file_dst = pj(agps_pruned_dir, asm_cmp + ".agp")
+           if self.agp_prune(agp_file_src, agp_file_dst, used_components) > 0:
+               agps_pruned[asm_cmp] = agp_file_dst
+
+        print(agps_pruned, file = sys.stderr)
+        # for asm_cmp in filter(lambda k: k in agps_pruned, agp_levels_sorted):
+
         # end
         # TODO: use catch raise catch instead
         if errors:
-            raise Exception("Integrity test failed: " + str(errors))
+            raise Exception("Loading sequence data failed: " + str(errors))
 
     # STAGES
+    def agp_prune(self, from_file, to_file, used):
+        # reomve used component 
+        #   and GAPS as they are not used by 'ensembl-pipeline/scripts/load_agp.pl'
+        os.makedirs(dirname(to_file), exist_ok=True)
+        open_ = self.is_gz(from_file) and gzip.open or open 
+        writes = 0
+        with open_(from_file, "r") as src:
+            with open(to_file, "w") as dst:
+                for line in src:
+                    fields = line.strip().split("\t")
+                    ( asm_id, asm_start, asm_end, asm_part,
+                      type_,
+                      cmp_id, cmp_start, cmp_end, cmp_strand
+                    ) = fields
+                    if type_ in "NU" or cmp_id in used:
+                        continue 
+                    used.add(cmp_id)
+                    print(line.strip(), file = dst)
+                    writes += 1
+        return writes
+
+
     def remove_IUPAC(self, from_file, to_file):
         IUPAC = self.param("IUPAC")
         os.makedirs(dirname(to_file), exist_ok=True)
