@@ -52,7 +52,7 @@ class LoadSequenceData(eHive.BaseRunnable):
 
         agps = self.from_param("manifest_data", "agp")
         cs_used_set = frozenset(sum(map(lambda x: x.split("-"), agps.keys()),[]))
-        cs_unknown = cs_used_set.difference(cs_order.keys()) 
+        cs_unknown = cs_used_set.difference(cs_order.keys())
         if (len(cs_unknown) > 0):
             raise Exception("Unknown coordinate system(s) %s" % {str(cs_unknown)})
 
@@ -64,7 +64,7 @@ class LoadSequenceData(eHive.BaseRunnable):
         agp_levels = [ (x[0], cs_order[x[1]], cs_order[x[2]]) for x in agp_cs_pairs ]
         bad_agps = list(filter(lambda x: x[1] < x[2], agp_levels))
         if (len(bad_agps) > 0):
-            raise Exception("component cs has higher order than assembled cs %s" % {str(bad_agps)})
+            raise Exception("component cs has higher order than assembled cs %s" % (str(bad_agps)))
          
         agp_levels_sorted = [ e[0] for e in sorted(agp_levels, key=lambda x:(-x[2], x[1]-x[2])) ]
         print(" ".join(agp_levels_sorted), file=sys.stderr)
@@ -81,7 +81,30 @@ class LoadSequenceData(eHive.BaseRunnable):
                agps_pruned[asm_cmp] = agp_file_dst
 
         print(agps_pruned, file = sys.stderr)
-        # for asm_cmp in filter(lambda k: k in agps_pruned, agp_levels_sorted):
+
+        asm_v = self.from_param("genome_data","assembly")["name"]
+
+        sequence_rank = max(cs_rank.values())
+        for (cs, rank) in sorted(cs_rank.items(), key=lambda p: -p[1]):
+           logs = pj(wd, "load", "%02d_%s" %(rank, cs) )
+           if (rank == sequence_rank): 
+               self.load_cs_data(cs, rank, "fasta", asm_v, fasta_clean, logs, seq_level = True)
+           else:
+               useful_agps = list(filter(lambda x: cs in x, agps_pruned.keys()))
+               if len(useful_agps) == 0:
+                   raise Exception("non-seq_level cs %s has no agps to assemble it from" % (cs))
+               for pair, agp_file_pruned in map(lambda k: (k, agps_pruned[k]), useful_agps):
+                   if (not pair.startswith(cs+"-")):
+                       continue
+                   self.load_cs_data(cs, rank, pair, asm_v, agp_file_pruned, logs)
+
+        # TODO
+        # ! add parameter to turn pruning off
+        # set ENA attribs
+        # add synonims from json and synonims with version (remove from sr name) for nonENA
+        # nullify sequence? versions in cs 
+        # set attributes MT, circular, location, etc
+        # ???
 
         # end
         # TODO: use catch raise catch instead
@@ -89,6 +112,59 @@ class LoadSequenceData(eHive.BaseRunnable):
             raise Exception("Loading sequence data failed: " + str(errors))
 
     # STAGES
+    def load_cs_data(self, cs, rank, pair, asm_v, src_file, log_pfx, seq_level = False):
+        # NB load_seq_region.pl and load_agp.pl are not failing on parameter errors (0 exit code)
+        os.makedirs(dirname(log_pfx), exist_ok=True)
+        self.load_seq_region(cs, rank, asm_v, src_file, log_pfx, seq_level)
+        if not seq_level: 
+            self.load_agp(pair, asm_v, src_file, log_pfx)
+
+    def load_seq_region(self, cs, rank, asm_v, src_file, log_pfx, seq_level = False):
+        en_root = self.param_required("ensembl_root_dir")
+        cmd = (r'''{_loader} {_db_string} -coord_system_version {_asm_v} -default_version ''' +
+               r'''    -rank {_rank} -coord_system_name {_cs} {_sl_flag} -{_tag}_file {_file}''' +
+               r'''     > {_log}.stdout 2> {_log}.stderr''').format(
+            _loader = "perl %s" % (pj(en_root, r"ensembl-pipeline/scripts/load_seq_region.pl")),
+            _db_string = self.db_string(),
+            _asm_v = asm_v,
+            _rank = rank,
+            _cs = cs,
+            _sl_flag = seq_level and "-sequence_level" or "",
+            _tag = seq_level and "fasta" or "agp",
+            _file = src_file,
+            _log = "%s_seq" % (log_pfx),
+        )
+        print("running %s" % (cmd), file = sys.stderr)
+        return sp.run(cmd, shell=True, check=True)
+  
+    def load_agp(self, pair, asm_v, src_file, log_pfx):
+        en_root = self.param_required("ensembl_root_dir")
+        (asm_n, cmp_n) = pair.strip().split("-")
+        cmd = (r'''{_loader} {_db_string} -assembled_version {_asm_v} ''' +
+               r'''    -assembled_name {_asm} -component_name {_cmp} ''' +
+               r'''    -agp_file {_file} ''' +
+               r'''    > {_log}.stdout 2> {_log}.stderr''').format(
+            _loader = "perl %s" % (pj(en_root, r"ensembl-pipeline/scripts/load_agp.pl")),
+            _db_string = self.db_string(),
+            _asm_v = asm_v,
+            _asm = asm_n,
+            _cmp = cmp_n,
+            _file = src_file,
+            _log = "%s_agp_%s" % (log_pfx, pair.replace("-","_")),
+        )
+        print("running %s" % (cmd), file = sys.stderr)
+        return sp.run(cmd, shell=True, check=True)
+
+    def db_string(self):
+        return "-dbhost {host_} -dbport {port_} -dbuser {user_} -dbpass {pass_} -dbname {dbname_} ".format(
+            host_ = self.param("dbsrv_host"),
+            port_ = self.param("dbsrv_port"),
+            user_ = self.param("dbsrv_user"),
+            pass_ = self.param("dbsrv_pass"),
+            dbname_ = self.param("db_name")
+        )
+
+
     def agp_prune(self, from_file, to_file, used):
         # reomve used component 
         #   and GAPS as they are not used by 'ensembl-pipeline/scripts/load_agp.pl'
