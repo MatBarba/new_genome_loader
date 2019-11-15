@@ -34,6 +34,8 @@ sub default_options {
 
     check_manifest => 1,
     prune_agp => 1,
+    unversion_scaffolds => 0,
+    sr_syn_src  => 'ensembl_internal_synonym', # 50803
 
     ##############################
 
@@ -64,6 +66,8 @@ sub pipeline_wide_parameters {
     dbsrv_url    => $self->o('dbsrv_url'),
 
     prune_agp    => $self->o('prune_agp'),
+    unversion_scaffolds => $self->o('unversion_scaffolds'),
+    sr_syn_src  => $self->o('sr_syn_src'),
   };
 }
 
@@ -251,6 +255,8 @@ sub pipeline_analyses {
       -parameters        => {
         work_dir => $self->o('pipeline_dir') . '/#db_name#/load_sequence',
         prune_agp => $self->o('prune_agp'),
+        unversion_scaffolds => $self->o('unversion_scaffolds'),
+        sr_syn_src  => $self->o('sr_syn_src'),
       },
       -analysis_capacity   => 5,
       -rc_name         => '8GB',

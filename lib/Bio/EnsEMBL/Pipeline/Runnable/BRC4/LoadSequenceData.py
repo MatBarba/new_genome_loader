@@ -23,6 +23,9 @@ class LoadSequenceData(eHive.BaseRunnable):
         return {
             'cs_order' : 'chunk,contig,non_ref_scaffold,scaffold,superscaffold,linkage_group,chromosome',
             'IUPAC' : 'RYKMSWBDHV',
+            'unversion_scaffolds' : 0,
+            'versioned_sr_syn_src' : 'INSDC', # 50710
+            'sr_syn_src' : 'ensembl_internal_synonym', # 50803
         }
 
     def run(self):
@@ -34,9 +37,10 @@ class LoadSequenceData(eHive.BaseRunnable):
         # initialize whatever
         genome = self.from_param("manifest_data", "genome")
         sra = self.from_param("manifest_data", "seq_region")
-        
-        # split into contigs
-        # TODO: add to agps,.... 
+
+        # TODO
+        # split into contigs, add AGP
+        # load data with no agps ??? m.b. create empty cs-cs agps
 
         # rename IUPAC to N symbols using sed
         fasta_raw = self.from_param("manifest_data", "fasta_dna")
@@ -55,10 +59,14 @@ class LoadSequenceData(eHive.BaseRunnable):
 
         self.load_seq_data(fasta_clean, agps_pruned, cs_rank, pj(wd, "load"))
 
+        self.add_contig_ena_attrib()
+        if self.param_bool("unversion_scaffolds"):
+            self.unversion_scaffolds(cs_rank, pj(wd, "unversion_scaffolds"))
+
+        self.add_synonyms(self.param_bool("unversion_scaffolds"))
+
         # TODO
-        # set ENA attribs
-        # add synonims from json and synonims with version (remove from sr name) for nonENA
-        # nullify sequence? versions in cs 
+        # nullify sequence? versions in cs
         # set attributes MT, circular, location, etc
         # ???
 
@@ -68,6 +76,61 @@ class LoadSequenceData(eHive.BaseRunnable):
             raise Exception("Loading sequence data failed: " + str(errors))
 
     # STAGES
+    def add_contig_ena_attrib(self):
+        pass
+
+    def add_synonyms(self, unversioned = False):
+        pass
+
+    def unversion_scaffolds(self, cs_rank, logs):
+        # non-versioned syns for contigs, versioned for the rest
+        seq_cs, max_rank = max([ (c, r) for c, r in cs_rank.items()], key = lambda k: k[1])
+        for cs in cs_rank:
+            if cs == seq_cs:
+                xdb = self.param("sr_syn_src")
+                self.copy_sr_name_to_syn(cs, xdb, pj(logs, "cp2syn", cs))
+                self.sr_name_unversion(cs, "seq_region_synomym", "synonym", pj(logs, "unv_srs", cs))
+            else:
+                xdb = self.param("versioned_sr_syn_src")
+                self.copy_sr_name_to_syn(cs, xdb, pj(logs, "cp2syn", cs))
+                self.sr_name_unversion(cs, "seq_region", "name", pj(logs, "unv_sr", cs))
+
+    def copy_sr_name_to_syn(self, cs, x_db, log_pfx):
+        os.makedirs(dirname(log_pfx), exist_ok=True)
+        en_root = self.param_required("ensembl_root_dir")
+        asm_v = self.from_param("genome_data","assembly")["name"]
+        mysql = r'''insert into seq_region_synonym (seq_region_id, synonym, external_db_id)
+                  select
+                      sr.seq_region_id, sr.name, xdb.external_db_id
+                  from
+                     seq_region sr, external_db xdb, coord_system cs
+                  where   xdb.db_name = "%s"
+                      and sr.coord_system_id = cs.coord_system_id
+                      and cs.name = "%s"
+                      and cs.version = "%s"
+                      and sr.name like "%%._"
+                ;''' % (x_db, cs, asm_v)
+
+        cmd = r'''{_dbcmd} -url "{_srv}{_dbname}" -sql '{_mysql}' > {_out} 2> {_err}'''.format(
+            _dbcmd = 'perl %s/ensembl-hive/scripts/db_cmd.pl' %(en_root),
+            _srv = self.param("dbsrv_url"),
+            _dbname = self.param("db_name"),
+            _mysql = mysql,
+            _out = log_pfx + ".stdout",
+            _err = log_pfx + ".stderr"
+        )
+        print("running %s" % (cmd), file = sys.stderr)
+        return sp.run(cmd, shell=True, check=True)
+
+
+    def sr_name_unversion(self, cs_id, tbl, fld, log_pfx):
+        os.makedirs(dirname(log_pfx), exist_ok=True)
+        en_root = self.param_required("ensembl_root_dir")
+        asm_v = self.from_param("genome_data","assembly")["name"]
+        # select synonym, substr(synonym,  1, locate(".", synonym, length(synonym)-2)-1)
+        #     from seq_region_synonym  where synonym like "%._"
+
+
     def coord_sys_order(self, cs_order_str):
         cs_order_lst = map(lambda x: x.strip(), cs_order_str.split(","))
         return { e:i for i,e in enumerate(filter(lambda x: len(x)>0, cs_order_lst)) }
@@ -96,22 +159,22 @@ class LoadSequenceData(eHive.BaseRunnable):
         agps_pruned = {}
         used_components = set()
         if not pruning:
-            used_components = None  
+            used_components = None
         for asm_cmp in agp_levels_sorted:
-            agp_file_src = agps[asm_cmp] 
+            agp_file_src = agps[asm_cmp]
             agp_file_dst = pj(agps_pruned_dir, asm_cmp + ".agp")
             if self.agp_prune(agp_file_src, agp_file_dst, used_components) > 0:
                 agps_pruned[asm_cmp] = agp_file_dst
         return agps_pruned
 
-      
+
     def load_seq_data(self, fasta, agps, cs_rank, log_pfx):
         asm_v = self.from_param("genome_data","assembly")["name"]
 
         sequence_rank = max(cs_rank.values())
         for (cs, rank) in sorted(cs_rank.items(), key=lambda p: -p[1]):
            logs = pj(log_pfx, "%02d_%s" %(rank, cs) )
-           if (rank == sequence_rank): 
+           if (rank == sequence_rank):
                self.load_cs_data(cs, rank, "fasta", asm_v, fasta, logs, seq_level = True)
            else:
                useful_agps = list(filter(lambda x: cs in x, agps.keys()))
@@ -132,7 +195,7 @@ class LoadSequenceData(eHive.BaseRunnable):
         os.makedirs(dirname(log_pfx), exist_ok=True)
         if load_region:
             self.load_seq_region(cs, rank, asm_v, src_file, log_pfx, seq_level)
-        if not seq_level: 
+        if not seq_level:
             self.load_agp(pair, asm_v, src_file, log_pfx)
 
     def load_seq_region(self, cs, rank, asm_v, src_file, log_pfx, seq_level = False):
@@ -152,7 +215,7 @@ class LoadSequenceData(eHive.BaseRunnable):
         )
         print("running %s" % (cmd), file = sys.stderr)
         return sp.run(cmd, shell=True, check=True)
-  
+
     def load_agp(self, pair, asm_v, src_file, log_pfx):
         en_root = self.param_required("ensembl_root_dir")
         (asm_n, cmp_n) = pair.strip().split("-")
@@ -182,10 +245,10 @@ class LoadSequenceData(eHive.BaseRunnable):
 
 
     def agp_prune(self, from_file, to_file, used = None):
-        # reomve used component 
+        # reomve used component
         #   and GAPS as they are not used by 'ensembl-pipeline/scripts/load_agp.pl'
         os.makedirs(dirname(to_file), exist_ok=True)
-        open_ = self.is_gz(from_file) and gzip.open or open 
+        open_ = self.is_gz(from_file) and gzip.open or open
         if used is None:
             cmd = r'''{_cat} {_file} > {_out}'''.format(
                 _cat = self.is_gz(from_file) and "zcat" or "cat",
@@ -205,7 +268,7 @@ class LoadSequenceData(eHive.BaseRunnable):
                       cmp_id, cmp_start, cmp_end, cmp_strand
                     ) = fields
                     if type_ in "NU" or cmp_id in used:
-                        continue 
+                        continue
                     used.add(cmp_id)
                     print(line.strip(), file = dst)
                     writes += 1
@@ -227,13 +290,13 @@ class LoadSequenceData(eHive.BaseRunnable):
 
     # UTILS
     def is_gz(self, filename):
-      try:   
+      try:
           return magic.from_file(filename, mime=True) == 'application/x-gzip'
       except:
           ...
-      return False 
+      return False
 
- 
+
     # TODO: add some metafunc setter getter
     def from_param(self, param, key):
         data = self.param_required(param)
