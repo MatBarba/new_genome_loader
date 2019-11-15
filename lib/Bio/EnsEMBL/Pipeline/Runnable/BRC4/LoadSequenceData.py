@@ -46,60 +46,16 @@ class LoadSequenceData(eHive.BaseRunnable):
         except sp.CalledProcessError as e:
             errors += [ "Execution failed: {} ".format(e) ]
 
-        # order agp based on cs_order 
-        cs_order_lst = map(lambda x: x.strip(), self.param("cs_order").split(","))
-        cs_order = { e:i for i,e in enumerate(filter(lambda x: len(x)>0, cs_order_lst)) }
-
         agps = self.from_param("manifest_data", "agp")
-        cs_used_set = frozenset(sum(map(lambda x: x.split("-"), agps.keys()),[]))
-        cs_unknown = cs_used_set.difference(cs_order.keys())
-        if (len(cs_unknown) > 0):
-            raise Exception("Unknown coordinate system(s) %s" % {str(cs_unknown)})
+        cs_order = self.coord_sys_order(self.param("cs_order"))
+        cs_rank = self.used_cs_ranks(agps, cs_order)
 
-        # when loading agp sort by:
-        #   highest component (cmp) cs level
-        #   lowest difference between cs ranks (asm - cmp)
-        #   i.e: chromosome-scaffold scaffold-chunk chromosome-chunk
-        agp_cs_pairs = list(map(lambda x: [x]+x.split("-"), agps.keys()))
-        agp_levels = [ (x[0], cs_order[x[1]], cs_order[x[2]]) for x in agp_cs_pairs ]
-        bad_agps = list(filter(lambda x: x[1] < x[2], agp_levels))
-        if (len(bad_agps) > 0):
-            raise Exception("component cs has higher order than assembled cs %s" % (str(bad_agps)))
-         
-        agp_levels_sorted = [ e[0] for e in sorted(agp_levels, key=lambda x:(-x[2], x[1]-x[2])) ]
-        print(" ".join(agp_levels_sorted), file=sys.stderr)
+        agps_pruned_dir = pj(wd, "agps_pruned")
+        agps_pruned = self.prune_agps(agps, cs_order, agps_pruned_dir, self.param_bool("prune_agp"))
 
-        cs_rank = {e:i for i,e in enumerate(sorted(cs_used_set,key=lambda x:-cs_order[x]), start=1)} 
-        #prune agps
-        agps_pruned_dir = pj(wd, "agps_pruned") 
-        agps_pruned = {}
-        used_components = set()
-        for asm_cmp in agp_levels_sorted:
-           agp_file_src = agps[asm_cmp] 
-           agp_file_dst = pj(agps_pruned_dir, asm_cmp + ".agp")
-           if self.agp_prune(agp_file_src, agp_file_dst, used_components) > 0:
-               agps_pruned[asm_cmp] = agp_file_dst
-
-        print(agps_pruned, file = sys.stderr)
-
-        asm_v = self.from_param("genome_data","assembly")["name"]
-
-        sequence_rank = max(cs_rank.values())
-        for (cs, rank) in sorted(cs_rank.items(), key=lambda p: -p[1]):
-           logs = pj(wd, "load", "%02d_%s" %(rank, cs) )
-           if (rank == sequence_rank): 
-               self.load_cs_data(cs, rank, "fasta", asm_v, fasta_clean, logs, seq_level = True)
-           else:
-               useful_agps = list(filter(lambda x: cs in x, agps_pruned.keys()))
-               if len(useful_agps) == 0:
-                   raise Exception("non-seq_level cs %s has no agps to assemble it from" % (cs))
-               for pair, agp_file_pruned in map(lambda k: (k, agps_pruned[k]), useful_agps):
-                   if (not pair.startswith(cs+"-")):
-                       continue
-                   self.load_cs_data(cs, rank, pair, asm_v, agp_file_pruned, logs)
+        self.load_seq_data(fasta_clean, agps_pruned, cs_rank, pj(wd, "load"))
 
         # TODO
-        # ! add parameter to turn pruning off
         # set ENA attribs
         # add synonims from json and synonims with version (remove from sr name) for nonENA
         # nullify sequence? versions in cs 
@@ -112,10 +68,70 @@ class LoadSequenceData(eHive.BaseRunnable):
             raise Exception("Loading sequence data failed: " + str(errors))
 
     # STAGES
-    def load_cs_data(self, cs, rank, pair, asm_v, src_file, log_pfx, seq_level = False):
+    def coord_sys_order(self, cs_order_str):
+        cs_order_lst = map(lambda x: x.strip(), cs_order_str.split(","))
+        return { e:i for i,e in enumerate(filter(lambda x: len(x)>0, cs_order_lst)) }
+
+    def used_cs_ranks(self, agps, cs_order):
+        cs_used_set = frozenset(sum(map(lambda x: x.split("-"), agps.keys()),[]))
+        cs_unknown = cs_used_set.difference(cs_order.keys())
+        if (len(cs_unknown) > 0):
+            raise Exception("Unknown coordinate system(s) %s" % {str(cs_unknown)})
+        return { e:i for i,e in enumerate(sorted(cs_used_set,key=lambda x:-cs_order[x]), start=1) }
+
+    def prune_agps(self, agps, cs_order, agps_pruned_dir, pruning = True):
+        # when loading agp sort by:
+        #   highest component (cmp) cs level (lowest rank)
+        #   lowest difference between cs ranks (asm - cmp)
+        #   i.e: chromosome-scaffold scaffold-chunk chromosome-chunk
+        agp_cs_pairs = list(map(lambda x: [x]+x.split("-"), agps.keys()))
+        agp_levels = [ (x[0], cs_order[x[1]], cs_order[x[2]]) for x in agp_cs_pairs ]
+        bad_agps = list(filter(lambda x: x[1] < x[2], agp_levels))
+        if (len(bad_agps) > 0):
+            raise Exception("component cs has higher order than assembled cs %s" % (str(bad_agps)))
+
+        agp_levels_sorted = [ e[0] for e in sorted(agp_levels, key=lambda x:(-x[2], x[1]-x[2])) ]
+
+        #prune agps
+        agps_pruned = {}
+        used_components = set()
+        if not pruning:
+            used_components = None  
+        for asm_cmp in agp_levels_sorted:
+            agp_file_src = agps[asm_cmp] 
+            agp_file_dst = pj(agps_pruned_dir, asm_cmp + ".agp")
+            if self.agp_prune(agp_file_src, agp_file_dst, used_components) > 0:
+                agps_pruned[asm_cmp] = agp_file_dst
+        return agps_pruned
+
+      
+    def load_seq_data(self, fasta, agps, cs_rank, log_pfx):
+        asm_v = self.from_param("genome_data","assembly")["name"]
+
+        sequence_rank = max(cs_rank.values())
+        for (cs, rank) in sorted(cs_rank.items(), key=lambda p: -p[1]):
+           logs = pj(log_pfx, "%02d_%s" %(rank, cs) )
+           if (rank == sequence_rank): 
+               self.load_cs_data(cs, rank, "fasta", asm_v, fasta, logs, seq_level = True)
+           else:
+               useful_agps = list(filter(lambda x: cs in x, agps.keys()))
+               if len(useful_agps) == 0:
+                   raise Exception("non-seq_level cs %s has no agps to assemble it from" % (cs))
+               load_region = True
+               for pair, agp_file_pruned in map(lambda k: (k, agps[k]), useful_agps):
+                   if (not pair.startswith(cs+"-")):
+                       continue
+                   self.load_cs_data(cs, rank, pair, asm_v, agp_file_pruned, logs, load_region)
+                   load_region = False
+
+    def load_cs_data(self,
+                     cs, rank, pair, asm_v,
+                     src_file, log_pfx,
+                     load_region = True, seq_level = False):
         # NB load_seq_region.pl and load_agp.pl are not failing on parameter errors (0 exit code)
         os.makedirs(dirname(log_pfx), exist_ok=True)
-        self.load_seq_region(cs, rank, asm_v, src_file, log_pfx, seq_level)
+        if load_region:
+            self.load_seq_region(cs, rank, asm_v, src_file, log_pfx, seq_level)
         if not seq_level: 
             self.load_agp(pair, asm_v, src_file, log_pfx)
 
@@ -165,11 +181,20 @@ class LoadSequenceData(eHive.BaseRunnable):
         )
 
 
-    def agp_prune(self, from_file, to_file, used):
+    def agp_prune(self, from_file, to_file, used = None):
         # reomve used component 
         #   and GAPS as they are not used by 'ensembl-pipeline/scripts/load_agp.pl'
         os.makedirs(dirname(to_file), exist_ok=True)
         open_ = self.is_gz(from_file) and gzip.open or open 
+        if used is None:
+            cmd = r'''{_cat} {_file} > {_out}'''.format(
+                _cat = self.is_gz(from_file) and "zcat" or "cat",
+                _file = from_file,
+                _out = to_file
+            )
+            print("running %s" % (cmd), file = sys.stderr)
+            sp.run(cmd, shell=True, check=True)
+            return 1
         writes = 0
         with open_(from_file, "r") as src:
             with open(to_file, "w") as dst:
@@ -215,4 +240,8 @@ class LoadSequenceData(eHive.BaseRunnable):
         if key not in data:
             raise Exception("Missing required %s data: %s" % (param , key))
         return data[key]
+
+    def param_bool(self, param):
+        val = self.param(param)
+        return bool(val) and "0" != val
 

@@ -33,6 +33,7 @@ sub default_options {
     tmp_dir => 'tmp',
 
     check_manifest => 1,
+    prune_agp => 1,
 
     ##############################
 
@@ -60,7 +61,9 @@ sub pipeline_wide_parameters {
 
     proddb_url   => $self->o('proddb_url'),
     taxonomy_url => $self->o('taxonomy_url'),
-    dbsrv_url    =>$self->o('dbsrv_url'),
+    dbsrv_url    => $self->o('dbsrv_url'),
+
+    prune_agp    => $self->o('prune_agp'),
   };
 }
 
@@ -247,6 +250,7 @@ sub pipeline_analyses {
       -language => 'python3',
       -parameters        => {
         work_dir => $self->o('pipeline_dir') . '/#db_name#/load_sequence',
+        prune_agp => $self->o('prune_agp'),
       },
       -analysis_capacity   => 5,
       -rc_name         => '8GB',
