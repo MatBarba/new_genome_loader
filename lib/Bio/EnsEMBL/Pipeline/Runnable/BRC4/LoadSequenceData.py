@@ -92,7 +92,7 @@ class LoadSequenceData(eHive.BaseRunnable):
                 xdb = self.param("versioned_sr_syn_src")
                 self.copy_sr_name_to_syn(cs, xdb, pj(logs, "cp2syn", cs))
                 self.sr_name_unversion(cs, "seq_region", "name", pj(logs, "unv_sr", cs))
-m
+
     def run_sql_req(self, sql, log_pfx):
         os.makedirs(dirname(log_pfx), exist_ok=True)
         en_root = self.param_required("ensembl_root_dir")
