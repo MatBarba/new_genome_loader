@@ -59,11 +59,12 @@ class LoadSequenceData(eHive.BaseRunnable):
 
         self.load_seq_data(fasta_clean, agps_pruned, cs_rank, pj(wd, "load"))
 
-        self.add_contig_ena_attrib()
+        self.add_contig_ena_attrib(pj(wd, "load", "set_ena"))
         if self.param_bool("unversion_scaffolds"):
             self.unversion_scaffolds(cs_rank, pj(wd, "unversion_scaffolds"))
 
-        self.add_synonyms(self.param_bool("unversion_scaffolds"))
+        seq_reg_meta = self.from_param("manifest_data", "seq_region")
+        self.add_synonyms(seq_reg_meta, self.param_bool("unversion_scaffolds"))
 
         # TODO
         # nullify sequence? versions in cs
@@ -76,10 +77,7 @@ class LoadSequenceData(eHive.BaseRunnable):
             raise Exception("Loading sequence data failed: " + str(errors))
 
     # STAGES
-    def add_contig_ena_attrib(self):
-        pass
-
-    def add_synonyms(self, unversioned = False):
+    def add_synonyms(self, meta_file, unversioned = False):
         pass
 
     def unversion_scaffolds(self, cs_rank, logs):
@@ -89,17 +87,45 @@ class LoadSequenceData(eHive.BaseRunnable):
             if cs == seq_cs:
                 xdb = self.param("sr_syn_src")
                 self.copy_sr_name_to_syn(cs, xdb, pj(logs, "cp2syn", cs))
-                self.sr_name_unversion(cs, "seq_region_synomym", "synonym", pj(logs, "unv_srs", cs))
+                self.sr_name_unversion(cs, "seq_region_synonym", "synonym", pj(logs, "unv_srs", cs))
             else:
                 xdb = self.param("versioned_sr_syn_src")
                 self.copy_sr_name_to_syn(cs, xdb, pj(logs, "cp2syn", cs))
                 self.sr_name_unversion(cs, "seq_region", "name", pj(logs, "unv_sr", cs))
-
-    def copy_sr_name_to_syn(self, cs, x_db, log_pfx):
+m
+    def run_sql_req(self, sql, log_pfx):
         os.makedirs(dirname(log_pfx), exist_ok=True)
         en_root = self.param_required("ensembl_root_dir")
+
+        cmd = r'''{_dbcmd} -url "{_srv}{_dbname}" -sql '{_sql}' > {_out} 2> {_err}'''.format(
+            _dbcmd = 'perl %s/ensembl-hive/scripts/db_cmd.pl' %(en_root),
+            _srv = self.param("dbsrv_url"),
+            _dbname = self.param("db_name"),
+            _sql = sql,
+            _out = log_pfx + ".stdout",
+            _err = log_pfx + ".stderr"
+        )
+        print("running %s" % (cmd), file = sys.stderr)
+        return sp.run(cmd, shell=True, check=True)
+
+
+    def add_contig_ena_attrib(self, log_pfx):
+        # Add ENA attrib for contigs (no sequence_level checks -- just cs name)
+        #   (see ensembl-datacheck/lib/Bio/EnsEMBL/DataCheck/Checks/SeqRegionNamesINSDC.pm)
+        sql = r'''insert into seq_region_attrib (seq_region_id, attrib_type_id, value)
+                select
+                  sr.seq_region_id, at.attrib_type_id, "ENA"
+                from
+                  seq_region sr, coord_system cs, attrib_type at
+                where   sr.coord_system_id = cs.coord_system_id
+                    and cs.name = "contig"
+                    and at.code = "external_db"
+              ;'''
+        return self.run_sql_req(sql, log_pfx)
+
+    def copy_sr_name_to_syn(self, cs, x_db, log_pfx):
         asm_v = self.from_param("genome_data","assembly")["name"]
-        mysql = r'''insert into seq_region_synonym (seq_region_id, synonym, external_db_id)
+        sql = r'''insert into seq_region_synonym (seq_region_id, synonym, external_db_id)
                   select
                       sr.seq_region_id, sr.name, xdb.external_db_id
                   from
@@ -110,26 +136,28 @@ class LoadSequenceData(eHive.BaseRunnable):
                       and cs.version = "%s"
                       and sr.name like "%%._"
                 ;''' % (x_db, cs, asm_v)
-
-        cmd = r'''{_dbcmd} -url "{_srv}{_dbname}" -sql '{_mysql}' > {_out} 2> {_err}'''.format(
-            _dbcmd = 'perl %s/ensembl-hive/scripts/db_cmd.pl' %(en_root),
-            _srv = self.param("dbsrv_url"),
-            _dbname = self.param("db_name"),
-            _mysql = mysql,
-            _out = log_pfx + ".stdout",
-            _err = log_pfx + ".stderr"
-        )
-        print("running %s" % (cmd), file = sys.stderr)
-        return sp.run(cmd, shell=True, check=True)
+        return self.run_sql_req(sql, log_pfx)
 
 
-    def sr_name_unversion(self, cs_id, tbl, fld, log_pfx):
-        os.makedirs(dirname(log_pfx), exist_ok=True)
-        en_root = self.param_required("ensembl_root_dir")
-        asm_v = self.from_param("genome_data","assembly")["name"]
+    def sr_name_unversion(self, cs, tbl, fld, log_pfx):
         # select synonym, substr(synonym,  1, locate(".", synonym, length(synonym)-2)-1)
         #     from seq_region_synonym  where synonym like "%._"
-
+        asm_v = self.from_param("genome_data","assembly")["name"]
+        sql = r'''update {_tbl} t, seq_region sr, coord_system cs
+                    set
+                      t.{_fld} = substr(t.{_fld},  1, locate(".", t.{_fld}, length(t.{_fld})-2)-1)
+                    where t.{_fld} like "%._"
+                      and t.seq_region_id = sr.seq_region_id
+                      and sr.coord_system_id = cs.coord_system_id
+                      and cs.name = "{_cs}"
+                      and cs.version = "{_asm_v}"
+                ;'''.format(
+                    _tbl = tbl,
+                    _fld = fld,
+                    _cs = cs,
+                    _asm_v = asm_v
+                )
+        return self.run_sql_req(sql, log_pfx)
 
     def coord_sys_order(self, cs_order_str):
         cs_order_lst = map(lambda x: x.strip(), cs_order_str.split(","))
