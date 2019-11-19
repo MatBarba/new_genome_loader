@@ -63,8 +63,8 @@ class LoadSequenceData(eHive.BaseRunnable):
         if self.param_bool("unversion_scaffolds"):
             self.unversion_scaffolds(cs_rank, pj(wd, "unversion_scaffolds"))
 
-        seq_reg_meta = self.from_param("manifest_data", "seq_region")
-        self.add_synonyms(seq_reg_meta, self.param_bool("unversion_scaffolds"))
+        seq_reg_file = self.from_param("manifest_data", "seq_region")
+        self.add_synonyms(seq_reg_file, pj(wd, "seq_region_syns"), self.param_bool("unversion_scaffolds"))
 
         # TODO
         # nullify sequence? versions in cs
@@ -77,8 +77,70 @@ class LoadSequenceData(eHive.BaseRunnable):
             raise Exception("Loading sequence data failed: " + str(errors))
 
     # STAGES
-    def add_synonyms(self, meta_file, unversioned = False):
-        pass
+    def add_synonyms(self, meta_file, wd, unversioned = False):
+        os.makedirs(wd, exist_ok=True)
+        # get names, syns  from db
+        sql = r'''select sr.seq_region_id as seq_region_id, sr.name, srs.synonym
+                 from seq_region sr left join seq_region_synonym srs
+                 on sr.seq_region_id = srs.seq_region_id
+              ;'''
+        syns_out_pfx = pj(wd, "syns_from_core")
+        self.run_sql_req(sql, syns_out_pfx)
+        # load them into dict
+        sr_ids = dict()
+        seen_syns_pre = []
+        with open(syns_out_pfx + ".stdout") as syns_file:
+            for line in syns_file:
+                if (line.startswith("seq_region_id")):
+                    continue
+                (sr_id, name, syn) = line.strip().split("\t")
+                sr_ids[name] = int(sr_id)
+                seen_syns_pre.append(name)
+                if syn != "NULL":
+                    seen_syns_pre.append(syn)
+                    # do we need unversioned syn as well???
+        seen_syns = frozenset(seen_syns_pre)
+        # load syns from file
+        new_syns = dict()
+        with open(meta_file) as mf:
+            data = json.load(mf)
+            if not isinstance(data, list):
+                data = [ data ]
+            for e in data:
+                if "synonyms" not in e:
+                   continue
+                es = list(filter(lambda s: s not in seen_syns, e["synonyms"]))
+                if len(es) <= 0:
+                    continue
+                en = e["name"]
+                eid = en in sr_ids and sr_ids[en] or None
+                if unversioned and eid is None:
+                    if en[-2] == ".":
+                         en = en[:-2]
+                         eid = en in sr_ids and sr_ids[en] or None
+                if eid is None:
+                    raise Exception("Not able to find seq_region for '%s'" % (e["name"]))
+                new_syns[eid] = es
+        # generaate sql req for loading
+        insert_sql_file = pj(wd, "insert_syns.sql")
+        if new_syns:
+            with open(insert_sql_file, "w") as sql:
+                print("insert into seq_region_synonym (seq_region_id, synonym) values", file=sql)
+                fst = ""
+                for _sr_id, _sr_syn in sum(map(lambda p: [(p[0], s) for s in p[1]], new_syns.items()), [ ]):
+                    print ('%s (%s, "%s")' % (fst, _sr_id, _sr_syn), file = sql)
+                    fst = ","
+                print(";", file=sql)
+            # run insert sql
+            self.run_sql_req(insert_sql_file, pj(wd, "insert_syns"), from_file = True)
+            # update external_db_id
+            sql_update_xdb = r'''update seq_region_synonym srs, external_db xdb
+                set srs.external_db_id = xdb.external_db_id
+                where srs.external_db_id is NULL
+                  and xdb.db_name = "%s"
+            ;''' % (self.param("sr_syn_src"))
+            self.run_sql_req(sql_update_xdb, pj(wd, "update_syns_xdb"))
+
 
     def unversion_scaffolds(self, cs_rank, logs):
         # non-versioned syns for contigs, versioned for the rest
@@ -93,15 +155,19 @@ class LoadSequenceData(eHive.BaseRunnable):
                 self.copy_sr_name_to_syn(cs, xdb, pj(logs, "cp2syn", cs))
                 self.sr_name_unversion(cs, "seq_region", "name", pj(logs, "unv_sr", cs))
 
-    def run_sql_req(self, sql, log_pfx):
+    def run_sql_req(self, sql, log_pfx, from_file = False):
         os.makedirs(dirname(log_pfx), exist_ok=True)
         en_root = self.param_required("ensembl_root_dir")
 
-        cmd = r'''{_dbcmd} -url "{_srv}{_dbname}" -sql '{_sql}' > {_out} 2> {_err}'''.format(
+        sql_option = r''' -sql '{_sql}' '''.format(_sql = sql)
+        if from_file:
+            sql_option = r''' < '{_sql}' '''.format(_sql = sql)
+
+        cmd = r'''{_dbcmd} -url "{_srv}{_dbname}" {_sql_option} > {_out} 2> {_err}'''.format(
             _dbcmd = 'perl %s/ensembl-hive/scripts/db_cmd.pl' %(en_root),
             _srv = self.param("dbsrv_url"),
             _dbname = self.param("db_name"),
-            _sql = sql,
+            _sql_option = sql_option,
             _out = log_pfx + ".stdout",
             _err = log_pfx + ".stderr"
         )
