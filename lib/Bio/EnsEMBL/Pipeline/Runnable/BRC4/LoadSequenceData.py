@@ -25,7 +25,13 @@ class LoadSequenceData(eHive.BaseRunnable):
             'IUPAC' : 'RYKMSWBDHV',
             'unversion_scaffolds' : 0,
             'versioned_sr_syn_src' : 'INSDC', # 50710
-            'sr_syn_src' : 'ensembl_internal_synonym', # 50803
+            'sr_syn_src' : 'VB_Community_Symbol', # 211
+            'sr_attrib_types' : {
+                'circular' : 'circular_seq',
+                'codon_table' : 'codon_table',
+                'location' : 'SO_term',
+                'non_ref' : 'non_ref',
+            },
         }
 
     def run(self):
@@ -41,6 +47,7 @@ class LoadSequenceData(eHive.BaseRunnable):
         # TODO
         # split into contigs, add AGP
         # load data with no agps ??? m.b. create empty cs-cs agps
+        # set toplevel non_ref karyotype_rank
 
         # rename IUPAC to N symbols using sed
         fasta_raw = self.from_param("manifest_data", "fasta_dna")
@@ -60,16 +67,24 @@ class LoadSequenceData(eHive.BaseRunnable):
         self.load_seq_data(fasta_clean, agps_pruned, cs_rank, pj(wd, "load"))
 
         self.add_contig_ena_attrib(pj(wd, "load", "set_ena"))
-        if self.param_bool("unversion_scaffolds"):
+
+        unversion_scaffolds = self.param_bool("unversion_scaffolds")
+        if unversion_scaffolds:
             self.unversion_scaffolds(cs_rank, pj(wd, "unversion_scaffolds"))
 
         seq_reg_file = self.from_param("manifest_data", "seq_region")
-        self.add_synonyms(seq_reg_file, pj(wd, "seq_region_syns"), self.param_bool("unversion_scaffolds"))
+        self.add_sr_synonyms(seq_reg_file, pj(wd, "seq_region_syns"), unversion_scaffolds)
+
+        self.add_sr_attribs(seq_reg_file, pj(wd, "seq_region_attr"), unversion_scaffolds)
+
+        self.set_toplevel()
+
+        self.add_chr_karyotype_rank()
+
+        self.add_asm_mappings()
 
         # TODO
-        # nullify sequence? versions in cs
-        # set attributes MT, circular, location, etc
-        # ???
+        # omit, split, non_ref
 
         # end
         # TODO: use catch raise catch instead
@@ -77,15 +92,108 @@ class LoadSequenceData(eHive.BaseRunnable):
             raise Exception("Loading sequence data failed: " + str(errors))
 
     # STAGES
-    def add_synonyms(self, meta_file, wd, unversioned = False):
+    def add_asm_mappings(self):
+        # nullifies asm_mappings contig versions as well
+        self.ctg_asm_mappings_null_versions()
+        pass
+
+    def ctg_asm_mappings_null_versions(self):
+        pass
+
+    def add_chr_karyotype_rank(self):
+        pass
+
+    def set_toplevel(self):
+        '''
+    # set top_level(6) seq_region_attrib
+    perl $ENSEMBL_ROOT_DIR/ensembl-pipeline/scripts/set_toplevel.pl \
+       $($CMD details prefix_db) \
+       -dbname $DBNAME \
+       -ignore_coord_system contig \
+       -ignore_coord_system non_ref_scaffold \
+       >  "$PIPELINE_DIR"/set_toplevel.stdout 2> "$PIPELINE_DIR"/set_toplevel.stderr
+        '''
+        pass
+
+    def add_sr_attribs(self, meta_file, wd, unversioned = False):
         os.makedirs(wd, exist_ok=True)
-        # get names, syns  from db
+        # find interesting attribs in meta_file
+        attribs_map = self.param("sr_attrib_types")
+        interest = frozenset(attribs_map.keys())
+        chosen = dict()
+        with open(meta_file) as mf:
+            data = json.load(mf)
+            if not isinstance(data, list):
+                data = [ data ]
+            for e in data:
+                if interest.intersection(e.keys()):
+                    chosen[e["name"]] = [e, -1]
+        if len(chosen) <= 0:
+            return
+        # get names, syns from db
+        syns_out_pfx = pj(wd, "syns_from_core")
+        self.get_db_syns(syns_out_pfx)
+        # load into dict
+        with open(syns_out_pfx + ".stdout") as syns_file:
+            for line in syns_file:
+                (sr_id, name, syn) = line.strip().split("\t")
+                for _name in [name, syn]:
+                    if _name in chosen:
+                        sr_id = int(sr_id)
+                        if chosen[_name][1] != -1 and chosen[_name][1] != sr_id:
+                            raise Exception(
+                                "Same name reused by different seq_regions: %d , %d" % (
+                                    chosen[_name][1], sr_id
+                                )
+                            )
+                        chosen[_name][1] = sr_id
+        # add seq_region_attribs
+        for tag, attr_type in attribs_map.items():
+            srlist = list(map(
+                lambda p:(p[1], p[0][tag]),
+                filter(lambda x: tag in x[0], chosen.values())
+            ))
+            self.set_sr_attrib(attr_type, srlist, pj(wd, "sr_attr_set_"+tag))
+
+    def set_sr_attrib(self, attr_type, id_val_lst, log_pfx):
+        # generaate sql req for loading
+        insert_sql_file = log_pfx + "_insert_attribs.sql"
+        if len(id_val_lst) <= 0:
+            return
+        with open(insert_sql_file, "w") as sql:
+            print("insert into seq_region_attrib (seq_region_id, attrib_type_id, value) values", file=sql)
+            fst = ""
+            for _sr_id, _val in id_val_lst:
+                if isinstance(_val, bool):
+                    _val = int(_val)
+                if isinstance(_val, str):
+                    _val = '"%s"' % (_val)
+                print ('%s (%s, 0, %s)' % (fst, _sr_id, str(_val)), file = sql)
+                fst = ","
+            print(";", file=sql)
+        # run insert sql
+        self.run_sql_req(insert_sql_file, log_pfx, from_file = True)
+        # update external_db_id
+        sql_update_at = r'''update seq_region_attrib sra, attrib_type at
+            set sra.attrib_type_id = at.attrib_type_id
+            where sra.attrib_type_id = 0
+              and at.code = "%s"
+        ;''' % (attr_type)
+        self.run_sql_req(sql_update_at, log_pfx+"_update_attr_type")
+
+    def get_db_syns(self, out_pfx):
+        # get names, syns from db
         sql = r'''select sr.seq_region_id as seq_region_id, sr.name, srs.synonym
                  from seq_region sr left join seq_region_synonym srs
                  on sr.seq_region_id = srs.seq_region_id
               ;'''
+        return self.run_sql_req(sql, out_pfx)
+
+    def add_sr_synonyms(self, meta_file, wd, unversioned = False):
+        os.makedirs(wd, exist_ok=True)
+        # get names, syns from db
         syns_out_pfx = pj(wd, "syns_from_core")
-        self.run_sql_req(sql, syns_out_pfx)
+        self.get_db_syns(syns_out_pfx)
         # load them into dict
         sr_ids = dict()
         seen_syns_pre = []
@@ -98,7 +206,6 @@ class LoadSequenceData(eHive.BaseRunnable):
                 seen_syns_pre.append(name)
                 if syn != "NULL":
                     seen_syns_pre.append(syn)
-                    # do we need unversioned syn as well???
         seen_syns = frozenset(seen_syns_pre)
         # load syns from file
         new_syns = dict()
@@ -110,6 +217,8 @@ class LoadSequenceData(eHive.BaseRunnable):
                 if "synonyms" not in e:
                    continue
                 es = list(filter(lambda s: s not in seen_syns, e["synonyms"]))
+                # do we need unversioned syn as well???
+                # Nov 2019: no, we need explicit list
                 if len(es) <= 0:
                     continue
                 en = e["name"]
