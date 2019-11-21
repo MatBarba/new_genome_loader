@@ -35,6 +35,7 @@ class LoadSequenceData(eHive.BaseRunnable):
             'not_toplevel_cs' : [], # i.e. "contig", "non_ref_scaffold"
         }
 
+
     def run(self):
         errors = []
         # params
@@ -48,7 +49,7 @@ class LoadSequenceData(eHive.BaseRunnable):
         # TODO
         # split into contigs, add AGP
         # load data with no agps ??? m.b. create empty cs-cs agps
-        # set toplevel non_ref karyotype_rank
+        # omit, split
 
         # rename IUPAC to N symbols using sed
         fasta_raw = self.from_param("manifest_data", "fasta_dna")
@@ -80,12 +81,10 @@ class LoadSequenceData(eHive.BaseRunnable):
 
         self.set_toplevel(pj(wd, "set_toplevel"), self.param("not_toplevel_cs"))
 
-        self.add_chr_karyotype_rank()
+        asm_meta = self.from_param("genome_data","assembly")
+        self.add_chr_karyotype_rank(asm_meta, pj(wd,"karyotype"))
 
         self.add_asm_mappings()
-
-        # TODO
-        # omit, split, non_ref
 
         # end
         # TODO: use catch raise catch instead
@@ -101,10 +100,59 @@ class LoadSequenceData(eHive.BaseRunnable):
     def ctg_asm_mappings_null_versions(self):
         pass
 
-    def add_chr_karyotype_rank(self):
-        # try to get from species meta, omit unmentioned (?)
-        #   sort by seq_region_id otherwise
-        pass
+    def add_chr_karyotype_rank(self, meta, wd):
+        # get order from  meta["chromosome_display_order"] , omit unmentioned
+        #   otherwise get toplevel "chromosome" seq_regions, sort by seq_region_id
+        os.makedirs(wd, exist_ok=True)
+        sr_ids = []
+        tag = "chromosome_display_order"
+        chr_order = meta and tag in meta and meta[tag] or None
+        if (chr_order == None):
+            # get chromosome id and karyotype_rank id
+            ids_sql = r'''select sr.seq_region_id as seq_region_id
+                        from seq_region sr, seq_region_attrib sra, coord_system cs, attrib_type at
+                        where sr.seq_region_id = sra.seq_region_id
+                          and sr.coord_system_id = cs.coord_system_id
+                          and sra.attrib_type_id = at.attrib_type_id
+                          and cs.name = "chromosome"
+                          and at.code = "toplevel"
+                       order by seq_region_id
+                      ;'''
+            ids_log_pfx = pj(wd,'chr_ids')
+            self.run_sql_req(ids_sql, ids_log_pfx)
+            # load
+            with open(ids_log_pfx + ".stdout") as f:
+                for line in f:
+                    if (line.startswith("seq_region_id")):
+                        continue
+                    (sr_id, ) = line.strip().split("\t")
+                    sr_ids.append(sr_id)
+            sr_ids = [ (_id, i) for i, _id in enumerate(sr_ids, start = 1) ]
+        else:
+            # show only chromosomes from the chromosome_order
+            # get names, syns from db
+            order = dict(map(lambda e: (e[1], e[0]), enumerate(chr_order, start = 1)))
+            # get syns
+            syns_out_pfx = pj(wd, "syns_from_core")
+            self.get_db_syns(syns_out_pfx)
+            # load into dict
+            with open(syns_out_pfx + ".stdout") as syns_file:
+                for line in syns_file:
+                    (sr_id, name, syn) = line.strip().split("\t")
+                    for _name in [name, syn]:
+                        if _name in order:
+                           sr_ids.append((int(sr_id), order[_name]))
+            # assert order is not reused
+            if len(sr_ids) != len(frozenset(map(lambda p: p[1], sr_ids))):
+                raise Exception("karyotype_rank is reused: %s" % (str(sr_ids)))
+            # assert seq_region_id is not reused
+            if len(sr_ids) == len(frozenset(map(lambda p: p[0], sr_ids))):
+                raise Exception("same seq_region with different karyotype_rank: %s" % (str(sr_ids)))
+        # insert attrib sql
+        if len(sr_ids) > 0:
+            tag = "karyotype_rank"
+            self.set_sr_attrib(tag, sr_ids, pj(wd, "sr_attr_set_"+tag))
+
 
     def set_toplevel(self, log_pfx, ignored_cs = []):
         # set top_level(6) seq_region_attrib
@@ -161,6 +209,7 @@ class LoadSequenceData(eHive.BaseRunnable):
 
     def set_sr_attrib(self, attr_type, id_val_lst, log_pfx):
         # generaate sql req for loading
+        os.makedirs(dirname(log_pfx), exist_ok=True)
         insert_sql_file = log_pfx + "_insert_attribs.sql"
         if len(id_val_lst) <= 0:
             return
@@ -190,6 +239,7 @@ class LoadSequenceData(eHive.BaseRunnable):
         sql = r'''select sr.seq_region_id as seq_region_id, sr.name, srs.synonym
                  from seq_region sr left join seq_region_synonym srs
                  on sr.seq_region_id = srs.seq_region_id
+                 order by sr.seq_region_id
               ;'''
         return self.run_sql_req(sql, out_pfx)
 
@@ -268,6 +318,7 @@ class LoadSequenceData(eHive.BaseRunnable):
                 self.copy_sr_name_to_syn(cs, xdb, pj(logs, "cp2syn", cs))
                 self.sr_name_unversion(cs, "seq_region", "name", pj(logs, "unv_sr", cs))
 
+
     def run_sql_req(self, sql, log_pfx, from_file = False):
         os.makedirs(dirname(log_pfx), exist_ok=True)
         en_root = self.param_required("ensembl_root_dir")
@@ -301,6 +352,7 @@ class LoadSequenceData(eHive.BaseRunnable):
                     and at.code = "external_db"
               ;'''
         return self.run_sql_req(sql, log_pfx)
+
 
     def copy_sr_name_to_syn(self, cs, x_db, log_pfx):
         asm_v = self.from_param("genome_data","assembly")["name"]
@@ -338,9 +390,11 @@ class LoadSequenceData(eHive.BaseRunnable):
                 )
         return self.run_sql_req(sql, log_pfx)
 
+
     def coord_sys_order(self, cs_order_str):
         cs_order_lst = map(lambda x: x.strip(), cs_order_str.split(","))
         return { e:i for i,e in enumerate(filter(lambda x: len(x)>0, cs_order_lst)) }
+
 
     def used_cs_ranks(self, agps, cs_order):
         cs_used_set = frozenset(sum(map(lambda x: x.split("-"), agps.keys()),[]))
@@ -348,6 +402,7 @@ class LoadSequenceData(eHive.BaseRunnable):
         if (len(cs_unknown) > 0):
             raise Exception("Unknown coordinate system(s) %s" % {str(cs_unknown)})
         return { e:i for i,e in enumerate(sorted(cs_used_set,key=lambda x:-cs_order[x]), start=1) }
+
 
     def prune_agps(self, agps, cs_order, agps_pruned_dir, pruning = True):
         # when loading agp sort by:
@@ -394,6 +449,7 @@ class LoadSequenceData(eHive.BaseRunnable):
                    self.load_cs_data(cs, rank, pair, asm_v, agp_file_pruned, logs, load_region)
                    load_region = False
 
+
     def load_cs_data(self,
                      cs, rank, pair, asm_v,
                      src_file, log_pfx,
@@ -423,6 +479,7 @@ class LoadSequenceData(eHive.BaseRunnable):
         print("running %s" % (cmd), file = sys.stderr)
         return sp.run(cmd, shell=True, check=True)
 
+
     def load_agp(self, pair, asm_v, src_file, log_pfx):
         en_root = self.param_required("ensembl_root_dir")
         (asm_n, cmp_n) = pair.strip().split("-")
@@ -440,6 +497,7 @@ class LoadSequenceData(eHive.BaseRunnable):
         )
         print("running %s" % (cmd), file = sys.stderr)
         return sp.run(cmd, shell=True, check=True)
+
 
     def db_string(self):
         return "-dbhost {host_} -dbport {port_} -dbuser {user_} -dbpass {pass_} -dbname {dbname_} ".format(
@@ -495,6 +553,7 @@ class LoadSequenceData(eHive.BaseRunnable):
         print("running %s" % (cmd), file = sys.stderr)
         return sp.run(cmd, shell=True, check=True)
 
+
     # UTILS
     def is_gz(self, filename):
       try:
@@ -505,11 +564,15 @@ class LoadSequenceData(eHive.BaseRunnable):
 
 
     # TODO: add some metafunc setter getter
-    def from_param(self, param, key):
+    def from_param(self, param, key, not_throw = False):
         data = self.param_required(param)
         if key not in data:
-            raise Exception("Missing required %s data: %s" % (param , key))
+            if not_throw:
+                return None
+            else:
+                raise Exception("Missing required %s data: %s" % (param , key))
         return data[key]
+
 
     def param_bool(self, param):
         val = self.param(param)
