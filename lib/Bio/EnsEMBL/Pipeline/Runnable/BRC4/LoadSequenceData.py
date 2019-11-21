@@ -32,6 +32,7 @@ class LoadSequenceData(eHive.BaseRunnable):
                 'location' : 'SO_term',
                 'non_ref' : 'non_ref',
             },
+            'not_toplevel_cs' : [], # i.e. "contig", "non_ref_scaffold"
         }
 
     def run(self):
@@ -77,7 +78,7 @@ class LoadSequenceData(eHive.BaseRunnable):
 
         self.add_sr_attribs(seq_reg_file, pj(wd, "seq_region_attr"), unversion_scaffolds)
 
-        self.set_toplevel()
+        self.set_toplevel(pj(wd, "set_toplevel"), self.param("not_toplevel_cs"))
 
         self.add_chr_karyotype_rank()
 
@@ -101,19 +102,22 @@ class LoadSequenceData(eHive.BaseRunnable):
         pass
 
     def add_chr_karyotype_rank(self):
+        # try to get from species meta, omit unmentioned (?)
+        #   sort by seq_region_id otherwise
         pass
 
-    def set_toplevel(self):
-        '''
-    # set top_level(6) seq_region_attrib
-    perl $ENSEMBL_ROOT_DIR/ensembl-pipeline/scripts/set_toplevel.pl \
-       $($CMD details prefix_db) \
-       -dbname $DBNAME \
-       -ignore_coord_system contig \
-       -ignore_coord_system non_ref_scaffold \
-       >  "$PIPELINE_DIR"/set_toplevel.stdout 2> "$PIPELINE_DIR"/set_toplevel.stderr
-        '''
-        pass
+    def set_toplevel(self, log_pfx, ignored_cs = []):
+        # set top_level(6) seq_region_attrib
+        en_root = self.param_required("ensembl_root_dir")
+        cmd = (r'''{_set_tl} {_db_string} {_ignored_cs} ''' +
+               r'''     > {_log}.stdout 2> {_log}.stderr''').format(
+            _set_tl = "perl %s" % (pj(en_root, r"ensembl-pipeline/scripts/set_toplevel.pl")),
+            _db_string = self.db_string(),
+            _ignored_cs = " ".join(map(lambda x: "-ignore_coord_system %s" % (x), ignored_cs)),
+            _log = "%s_seq" % (log_pfx),
+        )
+        print("running %s" % (cmd), file = sys.stderr)
+        return sp.run(cmd, shell=True, check=True)
 
     def add_sr_attribs(self, meta_file, wd, unversioned = False):
         os.makedirs(wd, exist_ok=True)
