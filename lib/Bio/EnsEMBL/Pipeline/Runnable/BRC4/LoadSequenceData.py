@@ -128,7 +128,7 @@ class LoadSequenceData(eHive.BaseRunnable):
         seq_rank = max(map(lambda cs: int(cs["rank"]), cs_info))
         nullify_cs_version_from = self.param("nullify_cs_version_from")
         ctg_lst = list(filter(lambda cs: cs["name"] == nullify_cs_version_from, cs_info))
-        clear_thr = ctg_lst and int(ctl_lst[0]["rank"]) or seq_rank
+        clear_thr = ctg_lst and int(ctg_lst[0]["rank"]) or seq_rank
         clear_lst = [ (cs["coord_system_id"], cs["name"]) for cs in cs_info
                         if (bool(cs["no_toplevel"]) and int(cs["rank"]) >= clear_thr) ]
         # run sql
