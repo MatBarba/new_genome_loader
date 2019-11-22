@@ -33,6 +33,7 @@ class LoadSequenceData(eHive.BaseRunnable):
                 'non_ref' : 'non_ref',
             },
             'not_toplevel_cs' : [], # i.e. "contig", "non_ref_scaffold"
+            'nullify_cs_version_from' : 'contig',
         }
 
 
@@ -84,7 +85,7 @@ class LoadSequenceData(eHive.BaseRunnable):
         asm_meta = self.from_param("genome_data","assembly")
         self.add_chr_karyotype_rank(asm_meta, pj(wd,"karyotype"))
 
-        self.add_asm_mappings()
+        self.add_asm_mappings(agps_pruned.keys(), pj(wd, "asm_mappings"))
 
         # end
         # TODO: use catch raise catch instead
@@ -92,13 +93,65 @@ class LoadSequenceData(eHive.BaseRunnable):
             raise Exception("Loading sequence data failed: " + str(errors))
 
     # STAGES
-    def add_asm_mappings(self):
-        # nullifies asm_mappings contig versions as well
-        self.ctg_asm_mappings_null_versions()
-        pass
+    def add_asm_mappings(self, cs_pairs, log_pfx):
+        # nullifies asm_mappings contig versions as well, but don't nullify toplevel
+        asm_v = self.from_param("genome_data","assembly")["name"]
+        for pair in cs_pairs:
+            higher, lower = pair.strip().split("-")
+            sql = r'''insert ignore into meta (species_id, meta_key, meta_value) values
+                    (1, "assembly.mapping", "{_higher}:{_v}|{_lower}:{_v}")
+                  ;'''.format(_v = asm_v, _higher = higher, _lower = lower)
+            self.run_sql_req(sql, pj(log_pfx, pair))
+        self.nullify_ctg_cs_version(pj(log_pfx, "nullify_cs_versions"))
 
-    def ctg_asm_mappings_null_versions(self):
-        pass
+    def nullify_ctg_cs_version(self, log_pfx):
+        # nullify every cs with rank larger than contig, but don't nullify toplevel ones
+        asm_v = self.from_param("genome_data","assembly")["name"]
+        # get cs_info (and if they have toplevel regions)
+        sql = r'''select cs.coord_system_id as coord_system_id,
+                         cs.name, cs.rank, (tl.coord_system_id is NULL) as no_toplevel
+                    from coord_system cs
+                      left join (
+                        select distinct sr.coord_system_id
+                          from seq_region sr, seq_region_attrib sra, attrib_type at
+                          where at.code = "toplevel"
+                            and sra.attrib_type_id = at.attrib_type_id
+                            and sra.value = 1
+                            and sra.seq_region_id = sr.seq_region_id
+                      ) as tl on tl.coord_system_id = cs.coord_system_id
+                    where cs.version = "{_asm_v}"
+                    order by rank
+              ;'''.format(_asm_v = asm_v)  
+        # run_sql 
+        toplvl_pfx = pj(log_pfx,"toplvl_info")
+        self.run_sql_req(sql, toplvl_pfx)
+        # load info
+        cs_info = []
+        with open(toplvl_pfx + ".stdout") as f:
+            header = next(f).strip().split("\t")
+            for line in f:
+                cs_info.append(dict(zip(header, line.strip().split())))    
+        # choose cs rank threshold to start clearing version from
+        seq_rank = max(map(lambda cs: int(cs["rank"]), cs_info))
+        nullify_cs_version_from = self.param("nullify_cs_version_from")
+        ctg_lst = list(filter(lambda cs: cs["name"] == nullify_cs_version_from, cs_info))
+        clear_thr = ctg_lst and int(ctl_lst[0]["rank"]) or seq_rank
+        clear_lst = [ (cs["coord_system_id"], cs["name"]) for cs in cs_info
+                        if (bool(cs["no_toplevel"]) and int(cs["rank"]) >= clear_thr) ]
+        # run sql
+        if clear_lst:
+            clear_pfx = pj(log_pfx, "clear")
+            with open(clear_pfx + ".sql", "w") as clear_sql:
+                for (cs_id, cs_name) in clear_lst:
+                    sql = r'''
+                        update meta set
+                            meta_value=replace(meta_value, "|{_cs_name}:{_asm_v}", "|{_cs_name}")
+                            where meta_key="assembly.mapping";
+                        update coord_system set version = NULL where coord_system_id = {_cs_id};
+                    '''.format(_asm_v = asm_v, _cs_name = cs_name, _cs_id = cs_id)
+                    print(sql, file = clear_sql)
+            self.run_sql_req(clear_pfx + ".sql", clear_pfx, from_file = True)
+        
 
     def add_chr_karyotype_rank(self, meta, wd):
         # get order from  meta["chromosome_display_order"] , omit unmentioned
