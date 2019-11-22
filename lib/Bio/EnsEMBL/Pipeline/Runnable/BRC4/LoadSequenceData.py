@@ -38,7 +38,6 @@ class LoadSequenceData(eHive.BaseRunnable):
 
 
     def run(self):
-        errors = []
         # params
         en_root = self.param_required("ensembl_root_dir")
         wd = self.param_required("work_dir")
@@ -55,10 +54,7 @@ class LoadSequenceData(eHive.BaseRunnable):
         # rename IUPAC to N symbols using sed
         fasta_raw = self.from_param("manifest_data", "fasta_dna")
         fasta_clean = pj(wd, "fasta", "seq_no_iupac.fasta")
-        try:
-            self.remove_IUPAC(fasta_raw, fasta_clean)
-        except sp.CalledProcessError as e:
-            errors += [ "Execution failed: {} ".format(e) ]
+        self.remove_IUPAC(fasta_raw, fasta_clean)
 
         agps = self.from_param("manifest_data", "agp")
         cs_order = self.coord_sys_order(self.param("cs_order"))
@@ -87,10 +83,6 @@ class LoadSequenceData(eHive.BaseRunnable):
 
         self.add_asm_mappings(agps_pruned.keys(), pj(wd, "asm_mappings"))
 
-        # end
-        # TODO: use catch raise catch instead
-        if errors:
-            raise Exception("Loading sequence data failed: " + str(errors))
 
     # STAGES
     def add_asm_mappings(self, cs_pairs, log_pfx):
@@ -103,6 +95,7 @@ class LoadSequenceData(eHive.BaseRunnable):
                   ;'''.format(_v = asm_v, _higher = higher, _lower = lower)
             self.run_sql_req(sql, pj(log_pfx, pair))
         self.nullify_ctg_cs_version(pj(log_pfx, "nullify_cs_versions"))
+
 
     def nullify_ctg_cs_version(self, log_pfx):
         # nullify every cs with rank larger than contig, but don't nullify toplevel ones
@@ -121,8 +114,8 @@ class LoadSequenceData(eHive.BaseRunnable):
                       ) as tl on tl.coord_system_id = cs.coord_system_id
                     where cs.version = "{_asm_v}"
                     order by rank
-              ;'''.format(_asm_v = asm_v)  
-        # run_sql 
+              ;'''.format(_asm_v = asm_v)
+        # run_sql
         toplvl_pfx = pj(log_pfx,"toplvl_info")
         self.run_sql_req(sql, toplvl_pfx)
         # load info
@@ -130,7 +123,7 @@ class LoadSequenceData(eHive.BaseRunnable):
         with open(toplvl_pfx + ".stdout") as f:
             header = next(f).strip().split("\t")
             for line in f:
-                cs_info.append(dict(zip(header, line.strip().split())))    
+                cs_info.append(dict(zip(header, line.strip().split())))
         # choose cs rank threshold to start clearing version from
         seq_rank = max(map(lambda cs: int(cs["rank"]), cs_info))
         nullify_cs_version_from = self.param("nullify_cs_version_from")
@@ -151,7 +144,7 @@ class LoadSequenceData(eHive.BaseRunnable):
                     '''.format(_asm_v = asm_v, _cs_name = cs_name, _cs_id = cs_id)
                     print(sql, file = clear_sql)
             self.run_sql_req(clear_pfx + ".sql", clear_pfx, from_file = True)
-        
+
 
     def add_chr_karyotype_rank(self, meta, wd):
         # get order from  meta["chromosome_display_order"] , omit unmentioned
@@ -219,6 +212,7 @@ class LoadSequenceData(eHive.BaseRunnable):
         )
         print("running %s" % (cmd), file = sys.stderr)
         return sp.run(cmd, shell=True, check=True)
+
 
     def add_sr_attribs(self, meta_file, wd, unversioned = False):
         os.makedirs(wd, exist_ok=True)
