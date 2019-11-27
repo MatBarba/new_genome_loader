@@ -33,6 +33,7 @@ sub default_options {
     tmp_dir => 'tmp',
 
     check_manifest => 1,
+    cs_order => 'chunk,contig,supercontig,non_ref_scaffold,scaffold,superscaffold,linkage_group,chromosome',
     prune_agp => 1,
     unversion_scaffolds => 0,
     sr_syn_src  => 'ensembl_internal_synonym', # 50803
@@ -65,6 +66,7 @@ sub pipeline_wide_parameters {
     taxonomy_url => $self->o('taxonomy_url'),
     dbsrv_url    => $self->o('dbsrv_url'),
 
+    cs_order     => $self->o('cs_order'),
     prune_agp    => $self->o('prune_agp'),
     unversion_scaffolds => $self->o('unversion_scaffolds'),
     sr_syn_src  => $self->o('sr_syn_src'),
@@ -239,7 +241,6 @@ sub pipeline_analyses {
       # Head analysis for the loading of data
       -logic_name => 'LoadData',
       -module     => 'Bio::EnsEMBL::Hive::RunnableDB::Dummy',
-      -input_ids  => [],
       -rc_name    => 'default',
       -meadow_type       => 'LSF',
       -flow_into  => {
@@ -254,6 +255,7 @@ sub pipeline_analyses {
       -language => 'python3',
       -parameters        => {
         work_dir => $self->o('pipeline_dir') . '/#db_name#/load_sequence',
+        cs_order => $self->o('cs_order'),
         prune_agp => $self->o('prune_agp'),
         unversion_scaffolds => $self->o('unversion_scaffolds'),
         sr_syn_src  => $self->o('sr_syn_src'),

@@ -5,7 +5,6 @@ from BCBio import GFF
 import eHive
 import gzip
 import json
-import magic
 import os
 import subprocess as sp
 import sys
@@ -21,7 +20,7 @@ class LoadSequenceData(eHive.BaseRunnable):
 
     def param_defaults(self):
         return {
-            'cs_order' : 'chunk,contig,non_ref_scaffold,scaffold,superscaffold,linkage_group,chromosome',
+            'cs_order' : 'chunk,contig,supercontig,non_ref_scaffold,scaffold,superscaffold,linkage_group,chromosome',
             'IUPAC' : 'RYKMSWBDHV',
             'unversion_scaffolds' : 0,
             'versioned_sr_syn_src' : 'INSDC', # 50710
@@ -603,11 +602,7 @@ class LoadSequenceData(eHive.BaseRunnable):
 
     # UTILS
     def is_gz(self, filename):
-      try:
-          return magic.from_file(filename, mime=True) == 'application/x-gzip'
-      except:
-          ...
-      return False
+      return filename.endswith(".gz")
 
 
     # TODO: add some metafunc setter getter
