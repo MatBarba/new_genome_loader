@@ -36,7 +36,8 @@ sub default_options {
     cs_order => 'chunk,contig,supercontig,non_ref_scaffold,scaffold,superscaffold,linkage_group,chromosome',
     prune_agp => 1,
     unversion_scaffolds => 0,
-    sr_syn_src  => 'ensembl_internal_synonym', # 50803
+    sr_syn_src_name  => 'ensembl_internal_synonym', # 50803
+    division => 'EnsemblMetazoa',
 
     ##############################
 
@@ -69,7 +70,8 @@ sub pipeline_wide_parameters {
     cs_order     => $self->o('cs_order'),
     prune_agp    => $self->o('prune_agp'),
     unversion_scaffolds => $self->o('unversion_scaffolds'),
-    sr_syn_src  => $self->o('sr_syn_src'),
+    sr_syn_src_name  => $self->o('sr_syn_src_name'),
+    division    => $self->o('division'),
   };
 }
 
@@ -261,7 +263,7 @@ sub pipeline_analyses {
         cs_order => $self->o('cs_order'),
         prune_agp => $self->o('prune_agp'),
         unversion_scaffolds => $self->o('unversion_scaffolds'),
-        sr_syn_src  => $self->o('sr_syn_src'),
+        sr_syn_src  => $self->o('sr_syn_src_name'),
       },
       -analysis_capacity   => 2,
       -rc_name         => '8GB',
@@ -284,8 +286,15 @@ sub pipeline_analyses {
 
     {
       -logic_name => 'FillMetadata',
-      -module     => 'Bio::EnsEMBL::Hive::RunnableDB::Dummy',
-      -input_ids  => [],
+      -module     => 'FillMetadata',
+      -language => 'python3',
+      -parameters        => {
+        work_dir => $self->o('pipeline_dir') . '/#db_name#/fill_metadata',
+        division => $self->o('division'),
+        ignore => [ qw/ assembly.version / ],
+        copy => { 'assembly.name' => 'assembly.default' },
+      },
+      -max_retry_count => 0,
       -rc_name    => 'default',
       -meadow_type       => 'LSF',
       -flow_into  => {
