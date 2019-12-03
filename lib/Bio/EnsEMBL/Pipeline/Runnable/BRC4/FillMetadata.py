@@ -25,10 +25,14 @@ class FillMetadata(eHive.BaseRunnable):
         copy = self.param("copy")
         genome_data = self.param_required("genome_data")
 
-        # update division
+        # update division and url
         if "species" in genome_data:
-            if "division" not in genome_data["species"]:
-                genome_data["species"]["division"] = division
+            sd = genome_data["species"]
+            if "division" not in sd:
+                sd["division"] = division
+            if "url" not in sd:
+                if "production_name" in sd:
+                    sd["url"] = sd["production_name"].capitalize()
 
         # flattern and dump
         flat = self.flattern(genome_data, ignore)
