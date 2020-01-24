@@ -111,15 +111,15 @@ sub get_karyotype_bands {
   my ($self, $slice, $kba) = @_;
 
   my $res = [];
-  foreach my $band ( @{ $kbar->fetch_all_by_Slice($slice) } ) {
+  foreach my $band ( @{ $kba->fetch_all_by_Slice($slice) } ) {
     my $o = {
       start => $band->seq_region_start,
       end => $band->seq_region_end,
       name => $band->name,
     };
-    my $stain = $band->stain,
+    my $stain = $band->stain;
     if (defined $stain) {
-      $o->{stain} = $stain
+      $o->{stain} = $stain;
     }
     $o->{structure} = "telomere" if ($stain eq 'TEL');
     $o->{structure} = "centromere" if ($stain eq 'ACEN');
