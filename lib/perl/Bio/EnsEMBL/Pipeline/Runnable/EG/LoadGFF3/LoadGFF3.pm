@@ -930,7 +930,6 @@ sub new_transcript {
     $gene->biotype($biotype);
   }
 
-  
   my $transcript = Bio::EnsEMBL::Transcript->new(
     -stable_id     => $stable_id,
     -biotype       => $biotype,
