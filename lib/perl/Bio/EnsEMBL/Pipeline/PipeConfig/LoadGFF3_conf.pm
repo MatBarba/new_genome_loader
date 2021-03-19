@@ -300,7 +300,7 @@ sub pipeline_analyses_generic {
 
     {
       -logic_name        => 'DumpGenome',
-      -module            => 'Bio::EnsEMBL::EGPipeline::Common::RunnableDB::DumpGenome',
+      -module            => 'Bio::EnsEMBL::EGPipeline::Common::RunnableDB::DatabaseDumper',
       -analysis_capacity => 10,
       -max_retry_count   => 1,
       -parameters        => {
