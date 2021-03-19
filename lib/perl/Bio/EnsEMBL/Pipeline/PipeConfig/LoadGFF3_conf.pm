@@ -340,7 +340,7 @@ sub pipeline_analyses_generic {
 
     {
       -logic_name        => 'AnalysisSetup',
-      -module            => 'Bio::EnsEMBL::Pipeline::Runnable::EG::Common::RunnableDB::AnalysisSetup',
+      -module            => 'Bio::EnsEMBL::EGPipeline::Common::RunnableDB::AnalysisSetup',
       -analysis_capacity => 10,
       -max_retry_count   => 0,
       -parameters        => {
