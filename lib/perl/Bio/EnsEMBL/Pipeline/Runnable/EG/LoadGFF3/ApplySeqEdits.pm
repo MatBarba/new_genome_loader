@@ -46,7 +46,7 @@ sub run {
   my $genbank_file       = $self->param('genbank_file');
   my $protein_fasta_file = $self->param('protein_fasta_file');
   
-  my $dba = $self->core_dba();
+  my $dba = $self->dba_from_param_or_core('db_url');
   
   if ($genbank_file) {
     $self->seq_edits_from_genbank($dba, $genbank_file);

@@ -65,6 +65,7 @@ sub param_defaults {
     # basic
     logic_name         => undef,
     module             => undef,
+    db_url             => undef,
     production_lookup  => 1,
     # aux
     delete_existing    => 0,
@@ -88,7 +89,7 @@ sub run {
   my $self = shift @_;
   my $logic_name = $self->param_required('logic_name');
   
-  my $dba = $self->core_dba();
+  my $dba = $self->dba_from_param_or_core('db_url');
   my $dbh = $dba->dbc->db_handle;
   my $aa = $dba->get_adaptor('Analysis');
   my $analysis = $aa->fetch_by_logic_name($logic_name);

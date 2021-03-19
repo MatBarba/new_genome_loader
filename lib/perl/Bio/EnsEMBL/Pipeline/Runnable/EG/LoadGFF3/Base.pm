@@ -64,7 +64,7 @@ sub fetch_input {
   
   # Need explicit disconnects, so that connections are freed up
   # while the analysis is running.
-  my $dba = $self->core_dba();
+  my $dba = $self->dba_from_param_or_core('db_url');
   $dba->dbc && $dba->dbc->disconnect_if_idle();
   $self->dbc && $self->dbc->disconnect_if_idle();
 }
@@ -162,6 +162,17 @@ sub url2dba {
     -dbname => $dbp->{dbname},
   );
   return $dba;
+}
+
+sub dba_from_param_or_core {
+  my ($self, $param) = @_;
+  my $dba = undef;
+
+  my $url = $self->param($param);
+  if (defined $url) {
+     $dba = $self->url2dba($url);
+  }
+  return $dba // $self->core_dba();
 }
 
 # logging methods
