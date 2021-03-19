@@ -22,7 +22,7 @@ limitations under the License.
 
 =head1 NAME
 
-Bio::EnsEMBL::Pipeline::Runnable::EG:LoadGFF3::EmailReport
+Bio::EnsEMBL::Pipeline::Runnable::EG:LoadGFF3::ReportSeqEdits
 
 =head1 Author
 
