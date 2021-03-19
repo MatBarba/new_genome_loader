@@ -1,6 +1,6 @@
 =head1 LICENSE
 
-Copyright [1999-2014] EMBL-European Bioinformatics Institute
+Copyright [1999-2021] EMBL-European Bioinformatics Institute
 and Wellcome Trust Sanger Institute
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,7 +35,7 @@ package Bio::EnsEMBL::Pipeline::Runnable::EG::LoadGFF3::DeleteGenes;
 use strict;
 use warnings;
 
-use base ('Bio::EnsEMBL::Pipeline::Runnable::EG::Common::RunnableDB::Base');
+use base ('Bio::EnsEMBL::EGPipeline::Common::RunnableDB::Base');
 
 sub run {
   my ($self) = @_;
