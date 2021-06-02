@@ -62,7 +62,7 @@ def get_all_genomes(redmine, build=None):
     print("%d issues found" % len(issues))
     return issues
  
-def parse_genome(issue):
+def parse_genome(issue, warn=True):
     """
     Extract genome metadata from a Redmine issue
     Return a nested dict
@@ -102,22 +102,24 @@ def parse_genome(issue):
         if abbrev:
             genome["BRC4"]["organism_abbrev"] = abbrev
         else:
-            print("No organism abbrev could be found for %s" % issue.id)
+            if warn:
+                print("No organism abbrev could be found for %s" % issue.id)
             return
     except:
-        print("Can't get organism abbrev for %s" % issue.id)
+        if warn:
+            print("Can't get organism abbrev for %s" % issue.id)
 
     # Warn to get GFF2Load
     try:
         gff_path = customs["GFF 2 Load"]["value"]
-        if gff_path:
+        if gff_path and warn:
             print("GFF2Load: separate gff file for %s: %s (issue %d)" % (genome["BRC4"]["organism_abbrev"], gff_path, issue.id))
     except:
         pass
 
     # Warn for replacement
     try:
-        if customs["Replacement genome?"]["value"] == "Yes":
+        if customs["Replacement genome?"]["value"] == "Yes" and warn:
             print("Replacement: the organism %s is a replacement (issue %d)" % (genome["BRC4"]["organism_abbrev"], issue.id))
     except:
         pass
@@ -200,13 +202,13 @@ def add_genome_organism_abbrev(redmine, build, update=False):
     # Get the taxonomy for each issue
     for issue in issues:
         time.sleep(0.1)
-        genome = parse_genome(issue)
+        genome = parse_genome(issue, warn=False)
         custom = get_custom_fields(issue)
         try:
             accession = custom["GCA number"]["value"]
             full_name = custom["Experimental Organisms"]["value"]
             organism_abbrev = make_organism_abbrev(full_name)
-            print("\t".join([str(issue.id), accession, organism_abbrev, issue.subject]))
+            print("New organism_abbrev for %s: %s (from %s)" % (issue.id, organism_abbrev, full_name))
         except:
             print("Could not generate an organism_abbrev for issue %d (%s)" % (issue.id, issue.subject))
             continue
