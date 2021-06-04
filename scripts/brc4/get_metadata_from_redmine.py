@@ -153,6 +153,13 @@ def get_custom_fields(issue):
     for c in issue.custom_fields:
         cfs[c["name"]] = c
     return cfs
+                
+def get_custom_value(custom, key):
+    try:
+        value = custom[key]["value"]
+        return value
+    except:
+        return
 
 def get_issues(redmine, datatype, build=None):
     """
@@ -210,40 +217,33 @@ def add_genome_organism_abbrev(redmine, build, species_list_path, update=False):
         custom = get_custom_fields(issue)
         try:
             is_replacement = get_custom_value(custom, "Replacement genome?")
-            accession = custom["GCA number"]["value"]
-            full_name = custom["Experimental Organisms"]["value"]
+            accession = get_custom_value(custom, "GCA number")
+            full_name = get_custom_value(custom, "Experimental Organisms")
             organism_abbrev = make_organism_abbrev(full_name)
             print("New organism_abbrev for %s: %s (from %s)" % (issue.id, organism_abbrev, full_name))
             if organism_abbrev in current_orgs:
                 if is_replacement and is_replacement != "No":
-                    print("New organism_name exists, but this is a replacement, so it is excepted, for %s: %s (from %s)" % (issue.id, organism_abbrev, full_name))
+                    print("SKIP: New organism_name exists, but this is a replacement, so it is excepted, for %s: %s (from %s)" % (issue.id, organism_abbrev, full_name))
                 else:
-                    print("New organism name ALREADY EXISTS for another species for %s: %s (from %s)" % (issue.id, organism_abbrev, full_name))
+                    print("WARNING: New organism name ALREADY EXISTS for another species for %s: %s (from %s)" % (issue.id, organism_abbrev, full_name))
                 continue
         except Exception as e:
             print("Could not generate an organism_abbrev for issue %d (%s): %s" % (issue.id, issue.subject, e))
             continue
         
-        try:
-            current_name = custom["Organism Abbreviation"]["value"]
-            if current_name:
-                if current_name != organism_abbrev:
-                    print("Issue %d already has a different organism_abbrev than inferred: %s vs %s" % (issue.id, current_name, organism_abbrev))
-                else:
-                    print("Issue %d already has the same name %s" % (issue.id, organism_abbrev))
-                continue
-        except:
-            # Update the issue!
-            if update:
-                pass
-                #redmine.update(issue.id, custom_fields={ "id": organism_abbrev_id, "value" : organism_abbrev })
-                
-def get_custom_value(custom, key):
-    try:
-        value = custom[key]["value"]
-        return value
-    except:
-        return
+        # Cehck against current organism abbrev, if any
+        current_name = get_custom_value(custom, "Organism Abbreviation")
+        if current_name:
+            if current_name != organism_abbrev:
+                print("WARNING: Issue %d already has a DIFFERENT organism_abbrev than inferred: %s vs %s" % (issue.id, current_name, organism_abbrev))
+            else:
+                print("SKIP: Issue %d already has the same name %s" % (issue.id, organism_abbrev))
+            continue
+            
+        # Update the issue!
+        if update:
+            print("Update issue %s with abbrev %s" % (issue.id, organism_abbrev))
+            redmine.issue.update(issue.id, custom_fields=[{ "id": organism_abbrev_id, "value" : organism_abbrev }])
 
 def get_current_orgs(list_path):
     orgs = dict()
@@ -291,7 +291,7 @@ def main():
     # Optional
     parser.add_argument('--build', type=int,
                 help='Restrict to a given build')
-    parser.add_argument('--update_redmine', type=int,
+    parser.add_argument('--update_redmine', default=False, action='store_true',
                 help='Actually update Redmine for the organism_abbrev (dry run by default)')
     parser.add_argument('--species_list', type=str,
                 help='A list of existing organism_abbrevs to ensure uniqueness')
