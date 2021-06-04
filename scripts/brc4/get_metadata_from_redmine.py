@@ -14,6 +14,7 @@ default_fields = dict(
 insdc_pattern = "^GC[AF]_\d{9}(\.\d+)?$"
 accession_api_url = "https://www.ebi.ac.uk/ena/browser/api/xml/%s"
 veupathdb_id = 1976
+organism_abbrev_id = 110
 
 def retrieve_genomes(redmine, output_dir, build=None):
     """
@@ -208,16 +209,41 @@ def add_genome_organism_abbrev(redmine, build, species_list_path, update=False):
         genome = parse_genome(issue, warn=False)
         custom = get_custom_fields(issue)
         try:
+            is_replacement = get_custom_value(custom, "Replacement genome?")
             accession = custom["GCA number"]["value"]
             full_name = custom["Experimental Organisms"]["value"]
             organism_abbrev = make_organism_abbrev(full_name)
             print("New organism_abbrev for %s: %s (from %s)" % (issue.id, organism_abbrev, full_name))
             if organism_abbrev in current_orgs:
-                print("New organism name already exists for %s: %s (from %s)" % (issue.id, organism_abbrev, full_name))
+                if is_replacement and is_replacement != "No":
+                    print("New organism_name exists, but this is a replacement, so it is excepted, for %s: %s (from %s)" % (issue.id, organism_abbrev, full_name))
+                else:
+                    print("New organism name ALREADY EXISTS for another species for %s: %s (from %s)" % (issue.id, organism_abbrev, full_name))
+                continue
+        except Exception as e:
+            print("Could not generate an organism_abbrev for issue %d (%s): %s" % (issue.id, issue.subject, e))
+            continue
+        
+        try:
+            current_name = custom["Organism Abbreviation"]["value"]
+            if current_name:
+                if current_name != organism_abbrev:
+                    print("Issue %d already has a different organism_abbrev than inferred: %s vs %s" % (issue.id, current_name, organism_abbrev))
+                else:
+                    print("Issue %d already has the same name %s" % (issue.id, organism_abbrev))
                 continue
         except:
-            print("Could not generate an organism_abbrev for issue %d (%s)" % (issue.id, issue.subject))
-            continue
+            # Update the issue!
+            if update:
+                pass
+                #redmine.update(issue.id, custom_fields={ "id": organism_abbrev_id, "value" : organism_abbrev })
+                
+def get_custom_value(custom, key):
+    try:
+        value = custom[key]["value"]
+        return value
+    except:
+        return
 
 def get_current_orgs(list_path):
     orgs = dict()
