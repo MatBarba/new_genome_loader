@@ -220,7 +220,6 @@ def add_genome_organism_abbrev(redmine, build, species_list_path, update=False):
             accession = get_custom_value(custom, "GCA number")
             full_name = get_custom_value(custom, "Experimental Organisms")
             organism_abbrev = make_organism_abbrev(full_name)
-            print("New organism_abbrev for %s: %s (from %s)" % (issue.id, organism_abbrev, full_name))
             if organism_abbrev in current_orgs:
                 if is_replacement and is_replacement != "No":
                     print("SKIP: New organism_name exists, but this is a replacement, so it is excepted, for %s: %s (from %s)" % (issue.id, organism_abbrev, full_name))
@@ -242,8 +241,10 @@ def add_genome_organism_abbrev(redmine, build, species_list_path, update=False):
             
         # Update the issue!
         if update:
-            print("Update issue %s with abbrev %s" % (issue.id, organism_abbrev))
+            print("Update issue %s with abbrev %s (from %s)" % (issue.id, organism_abbrev, full_name))
             redmine.issue.update(issue.id, custom_fields=[{ "id": organism_abbrev_id, "value" : organism_abbrev }])
+        else:
+            print("DRY RUN: New organism_abbrev for %s: %s (from %s)" % (issue.id, organism_abbrev, full_name))
 
 def get_current_orgs(list_path):
     orgs = dict()
