@@ -219,8 +219,10 @@ def add_genome_organism_abbrev(redmine, build, species_list_path, update=False):
             is_replacement = get_custom_value(custom, "Replacement genome?")
             accession = get_custom_value(custom, "GCA number")
             full_name = get_custom_value(custom, "Experimental Organisms")
+            if not full_name:
+                raise Exception("No name (Experimental Organisms) to use to create ab abbreviation")
             organism_abbrev = make_organism_abbrev(full_name)
-            if organism_abbrev in current_orgs:
+            if organism_abbrev.lower() in current_orgs:
                 if is_replacement and is_replacement != "No":
                     print("SKIP: New organism_name exists, but this is a replacement, so it is excepted, for %s: %s (from %s)" % (issue.id, organism_abbrev, full_name))
                 else:
@@ -247,7 +249,7 @@ def add_genome_organism_abbrev(redmine, build, species_list_path, update=False):
             print("DRY RUN: New organism_abbrev for %s: %s (from %s)" % (issue.id, organism_abbrev, full_name))
 
 def get_current_orgs(list_path):
-    orgs = dict()
+    orgs = []
     if not list_path: return orgs
 
     # Column that contains the organism_abbrev
@@ -258,7 +260,9 @@ def get_current_orgs(list_path):
         for line in orgs_fh:
             line.strip()
             cols = line.split("\t")
-            orgs[cols[org_column]] = True
+            abbrev = cols[org_column]
+            abbrev = abbrev.lower()
+            orgs.append(abbrev)
     print("%d known organism_abbrevs" % len(orgs))
     
     return orgs 
