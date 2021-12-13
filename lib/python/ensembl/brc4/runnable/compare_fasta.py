@@ -12,6 +12,20 @@ from Bio import SeqIO
 from os import path
 from ensembl.brc4.runnable.parser import Parser
 
+class SeqGroup():
+    def __init__(self, sequence, identifier=None):
+        self.sequence = sequence
+        self.length = len(self.sequence)
+        self.ids = []
+        if identifier: self.add_id(identifier)
+        self.count = len(self.ids)
+    
+    def __str__(self):
+        return ", ".join(self.ids)
+    
+    def add_id(self, identifier):
+        self.ids.append(identifier)
+        self.count = len(self.ids)
 
 class compare_fasta(eHive.BaseRunnable):
 
@@ -66,7 +80,7 @@ class compare_fasta(eHive.BaseRunnable):
 
         accession_version = r'\.\d+$'
         report = []
-        for old_name, insdc_name in seq_map.items():
+        for insdc_name, old_name in seq_map.items():
             if insdc_name not in report_seq:
                 raise Exception("No INSDC %s found in report" % insdc_name)
             else:
@@ -102,6 +116,20 @@ class compare_fasta(eHive.BaseRunnable):
     def get_json(self, json_path):
         with open(json_path) as json_file:
             return json.load(json_file)
+        
+    def build_seq_dict(self, seqs):
+        """Build a seq dict taking duplicates into account"""
+        
+        seqs_dict = dict()
+        
+        for name, seq in seqs.items():
+            if seq in seqs_dict:
+                seqs_dict[seq].add_id(name)
+            else:
+                seqs_dict[seq] = SeqGroup(seq, name)
+        
+        return seqs_dict
+                
 
     def get_fasta(self, fasta_path, map_dna):
 
@@ -152,13 +180,13 @@ class compare_fasta(eHive.BaseRunnable):
             comp.append("Same number of sequences: %d" % len(seq1))
 
         # Compare sequences
-        seqs1 = {seq: name for name, seq in seq1.items()}
-        seqs2 = {seq: name for name, seq in seq2.items()}
-
-        common = {seqs2[seq]: name for seq,
-                  name in seqs1.items() if seq in seqs2}
-        only1 = {seq: name for seq, name in seqs1.items() if not seq in seqs2}
-        only2 = {seq: name for seq, name in seqs2.items() if not seq in seqs1}
+        seqs1 = self.build_seq_dict(seq1)
+        seqs2 = self.build_seq_dict(seq2)
+        
+        common, group_comp = self.find_common_groups(seqs1, seqs2)
+        comp += group_comp
+        only1 = {seq: group for seq, group in seqs1.items() if not seq in seqs2}
+        only2 = {seq: group for seq, group in seqs2.items() if not seq in seqs1}
 
         if len(seq1) == len(seq2) and len(common) == len(seq1):
             if len(only1) == 0 and len(only2) == 0:
@@ -338,3 +366,30 @@ class compare_fasta(eHive.BaseRunnable):
                     comp.append("\tOnly in 2: %s (%d)" % (name, length))
 
         return (stats, comp, common)
+
+    def find_common_groups(self, seqs1, seqs2):
+        
+        print(len(seqs1))
+        print(len(seqs2))
+        
+        comp = []
+        common = {}
+        for seq1, group1 in seqs1.items():
+            if seq1 in seqs2:
+                group2 = seqs2[seq1]
+                
+                # Check that the 2 groups have the same number of sequences
+                if group1.count == group2.count:
+                    if group1.count == 1:
+                        common[group1.ids[0]] = group2.ids[0]
+                    else:
+                        comp.append(f"Matched 2 identical groups of sequences: {group1} and {group2}")
+                        possible_id2 = " OR ".join(group2.ids)
+                        for id1 in group1.ids:
+                            common[id1] = possible_id2
+                            
+                else:
+                    comp.append(f"Matched 2 different groups of sequences ({group1.count} vs {group2.count}): {group1} and {group2}")
+        
+        print(len(common))
+        return common, comp

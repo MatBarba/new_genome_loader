@@ -281,6 +281,10 @@ class process_gff3(eHive.BaseRunnable):
                             transcript = self.gene_to_exon(gene)
                             gene.sub_features = [transcript]
 
+                        # Store gene functional annotation
+                        self.transfer_description(gene)
+                        self.add_funcann_feature(functional_annotation, gene, "gene")
+                        
                         # TRANSCRIPTS
                         transcripts_to_delete = []
                         for count, transcript in enumerate(gene.sub_features):
@@ -406,10 +410,16 @@ class process_gff3(eHive.BaseRunnable):
         Check a product string
         Return True only if the string is valid
         """
-
-        no_product_names = ["uncharacterized protein",
-                            "putative protein", "hypothetical protein"]
-
+        
+        no_product_names = [
+                "uncharacterized protein",
+                "putative protein",
+                "putative uncharacterized protein",
+                "hypothetical protein",
+                "protein of unknown function",
+                "predicted protein",
+                ]
+        
         if product.lower() in no_product_names:
             return False
         return True
@@ -552,7 +562,7 @@ class process_gff3(eHive.BaseRunnable):
         # Description?
         if "product" in feature.qualifiers:
             description = feature.qualifiers["product"][0]
-            if not re.search("^hypothetical protein$", description):
+            if self.check_product(description):
                 feature_object["description"] = description
 
         if "Name" in feature.qualifiers and not "description" in feature_object:
