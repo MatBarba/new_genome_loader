@@ -84,7 +84,7 @@ sub param_defaults {
                         'RNase_MRP_RNA', 'RNAse_P_RNA', 'rRNA', 'snoRNA',
                         'snRNA', 'sRNA', 'SRP_RNA', 'tRNA', 'scRNA', 'guide_RNA',
                         'telomerase_RNA', 'antisense_RNA',
-                        'transposable_element'],
+                        'transposable_element','TR_V_gene','IG_V_gene','IG_C_gene'],
     exon_types      => ['exon', 'pseudogenic_exon'],
     cds_types       => ['CDS'],
     utr_types       => ['five_prime_UTR', 'three_prime_UTR'],
@@ -96,7 +96,7 @@ sub param_defaults {
                         'chromosome', 'supercontig', 'contig',
                         'region', 'biological_region',
                         'regulatory_region', 'repeat_region',
-                        'long_terminal_repeat', 'STS'],
+                        'long_terminal_repeat', 'STS','D_loop','origin_of_replication'],
 
     # By default, it is assumed that the above type lists are exhaustive.
     # If there is a type in the GFF3 that is not listed, an error will be
