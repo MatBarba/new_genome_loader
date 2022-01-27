@@ -47,6 +47,7 @@ class process_gff3(eHive.BaseRunnable):
 		    "pre_miRNA",
 		    "guide_RNA",
 		    "TR_V_gene",
+		    "TR_C_gene",
 		    "IG_V_gene",
 		    "IG_C_gene"
                     ),
