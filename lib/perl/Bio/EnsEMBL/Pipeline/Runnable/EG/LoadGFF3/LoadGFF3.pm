@@ -76,7 +76,7 @@ sub param_defaults {
     # Lists of the types that we expect to see in the GFF3 file
     gene_types      => ['gene', 'pseudogene', 'miRNA_gene', 'ncRNA_gene',
                         'rRNA_gene', 'snoRNA_gene', 'snRNA_gene', 'tRNA_gene',
-                        'transposable_element'],
+                        'transposable_element', 'IG_V_gene'],
     mrna_types      => ['mRNA', 'transcript', 'misc_RNA', 'RNA',
                         'pseudogenic_transcript', 'pseudogenic_rRNA', 'pseudogenic_tRNA',
                         'ncRNA', 'lincRNA', 'miRNA', 'pre_miRNA',
@@ -317,6 +317,7 @@ sub add_transcripts {
         my $transcript = $self->add_transcript($db, $gff_transcript, $gene);
 
         if ($transcript->biotype eq 'protein_coding'
+            or $transcript->biotype eq 'IG_V_gene'
             or $transcript->biotype eq 'pseudogene_with_CDS') {
           $self->add_translation($db, $gff_transcript, $gene, $transcript);
         }
@@ -862,16 +863,21 @@ sub set_nontranslating_gene {
     # we want the gene to be so too.
     my $protein_coding_transcript = 0;
     my $nontranslating_transcript = 0;
+    my $igv_transcript = 0;
     foreach my $transcript (@{$gene->get_all_Transcripts}) {
       if ($transcript->biotype eq 'protein_coding') {
         $protein_coding_transcript = 1;
-      }
-      if ($transcript->biotype eq 'nontranslating_CDS') {
+      } elsif ($transcript->biotype eq 'nontranslating_CDS') {
         $nontranslating_transcript = 1;
+      } elsif ($transcript->biotype eq 'IG_V_gene') {
+        $igv_transcript = 1;
       }
     }
+
     if ($protein_coding_transcript) {
       $gene->biotype('protein_coding');
+    } elsif ($igv_transcript) {
+      $gene->biotype('IG_V_gene');
     } elsif ($nontranslating_transcript) {
       $self->log_warning("Set " . $gene->stable_id . " biotype to nontranslating_CDS (from set_nontranslating_gene, there are 'nontranslating_CDS' transcripts)");
       $gene->biotype('nontranslating_CDS');
@@ -1047,8 +1053,13 @@ sub new_transcript {
   
   # Protein coding: if there are CDSs, don't rely on the biotype
   } elsif ($translatable) {
-    $biotype = "protein_coding";
-    $self->log_warning("Protein_coding: $stable_id");
+    if ($gene_type eq 'IG_V_gene') {
+      $biotype = "IG_V_gene";
+      $self->log_warning("IG V gene: $stable_id");
+    } else {
+      $biotype = "protein_coding";
+      $self->log_warning("Protein_coding: $stable_id");
+    }
   
   # Non protein coding
   } else {
@@ -1059,7 +1070,7 @@ sub new_transcript {
     # NB: we may need a control of what biotypes are known or not
     # there's a healthcheck: genes have at least one transcript with a matching biotype group
     #    see: ensembl-datacheck/lib/Bio/EnsEMBL/DataCheck/Checks/GeneBiotypes.pm
-    if (exists $transfer_biotype_tr2gene->{$biotype} || !$gene_type || lc($gene_type) eq "protein_coding") {
+    if (exists $transfer_biotype_tr2gene->{$biotype} || !$gene_type || lc($gene_type) eq "protein_coding" || lc($gene_type) eq "IG_V_gene") {
       $self->log_warning("Setting biotype to $biotype for non-coding: $stable_id (gene " . $gene->stable_id . ")");
       $gene->biotype($biotype);
     } else {
